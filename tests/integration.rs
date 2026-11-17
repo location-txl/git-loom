@@ -4,6 +4,40 @@ use std::{
     process::{Command, Output},
 };
 use tempfile::TempDir;
+
+#[test]
+fn uninstall_removes_only_the_running_executable() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("git-loom");
+    fs::copy(env!("CARGO_BIN_EXE_git-loom"), &executable).unwrap();
+    let config = dir.path().join(".git-loom.json");
+    fs::write(&config, "invalid config, must not be read or removed").unwrap();
+    for args in [vec!["uninstall", "--help"], vec!["--dry-run", "uninstall"]] {
+        let output = Command::new(&executable)
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(executable.exists());
+    }
+    let output = Command::new(&executable)
+        .current_dir(dir.path())
+        .args(["uninstall", "unexpected"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(executable.exists());
+    let output = Command::new(&executable)
+        .current_dir(dir.path())
+        .arg("uninstall")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    assert!(!executable.exists());
+    assert!(config.exists());
+}
+
 fn git(path: &Path, args: &[&str]) -> String {
     let o = Command::new("git")
         .arg("-C")

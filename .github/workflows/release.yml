@@ -1,0 +1,59 @@
+name: 发布 macOS ARM 安装包
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'completions/**'
+      - 'docs/config.txt'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      RUSTUP_TOOLCHAIN: '1.90.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy --target aarch64-apple-darwin
+      - name: 复用 Rust 构建缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: 'CARGO CC CFLAGS CXX CMAKE RUST MACOSX_DEPLOYMENT_TARGET'
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: 检查发布版本
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          test "$RELEASE_TAG" = "v$version"
+      - name: 检查与测试
+        run: |
+          cargo +1.90.0 fmt --check
+          cargo +1.90.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.90.0 test --locked
+      - name: 构建与打包
+        run: |
+          cargo +1.90.0 build --locked --release --target aarch64-apple-darwin
+          target/aarch64-apple-darwin/release/git-loom --version
+          mkdir dist
+          tar -czf dist/git-loom-aarch64-apple-darwin.tar.gz -C target/aarch64-apple-darwin/release git-loom
+          cd dist
+          shasum -a 256 git-loom-aarch64-apple-darwin.tar.gz > git-loom-aarch64-apple-darwin.tar.gz.sha256
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes

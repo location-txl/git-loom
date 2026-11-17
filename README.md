@@ -4,7 +4,23 @@
 
 ## 安装
 
-需要 Rust 1.90 或更新版本及系统 Git。当前在 macOS 上验证；其他平台尚未验收。
+一键安装目前仅支持 **macOS Apple Silicon（M 系列芯片）**，无需安装 Rust。使用时需要系统 Git。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/location-txl/git-loom/main/install.sh | sh
+```
+
+默认安装到 `~/.local/bin/git-loom`，重复运行即可升级。
+
+卸载：
+
+```sh
+git loom uninstall
+```
+
+### 从源码安装
+
+需要 Rust 1.90 或更新版本及系统 Git。
 
 ```sh
 cargo install --path .
