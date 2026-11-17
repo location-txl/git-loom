@@ -1,0 +1,79 @@
+Configure Git Loom
+
+Usage: git loom config
+
+1. Create .git-loom.json in the primary repository root.
+
+   For a single repository:
+
+   {
+     "copyFiles": [".env", ".env.*", "local.properties"]
+   }
+
+   To include a related repository:
+
+   {
+     "copyFiles": [".env", ".env.*", "local.properties"],
+     "peers": [
+       {
+         "path": "../platform",
+         "branchPrefix": "tob/",
+         "tagPrefix": "tob/",
+         "copyFiles": [".env", ".env.*", "local.properties"]
+       }
+     ]
+   }
+
+2. Adjust the fields for your project.
+
+   copyFiles
+     Files to copy when creating a worktree, relative to each repository root.
+     Defaults to []. Each peer has its own list; it does not inherit the primary
+     repository's list. Use * within a directory or ** to match across directories,
+     for example config/**/*.local.json. Directory names alone do not copy trees.
+     Absolute paths, .., .git components, and backslashes are not allowed.
+     Git metadata and symlinks are skipped; existing destination files are kept.
+     Files such as local.properties are copied unchanged, without rewriting paths.
+
+   peers
+     Related repositories. Defaults to [] for single-repository mode.
+     Peer configuration files are not loaded recursively.
+
+   peers[].path
+     Required. A path relative to the primary repository root, pointing to an
+     existing repository root. Repositories must not be nested or duplicated,
+     including worktrees belonging to the same Git repository.
+
+   peers[].branchPrefix / peers[].tagPrefix
+     Prefixes added to branch and tag names in that peer; both default to "".
+     With "tob/", branch main maps to tob/main and tag v1.0 maps to tob/v1.0.
+     Selecting --repo uses that repository's actual names without adding prefixes.
+
+   Use strict JSON: no comments or trailing commas. Unknown fields are rejected.
+   Without a configuration file, Loom uses one repository and copies no files.
+
+3. Check your configuration from the primary repository.
+
+   git loom doctor
+   git loom --dry-run worktree add ../dev-environment -b feature/example
+
+   The dry run previews worktree creation and matching files. Choose a new target
+   directory and branch name. Ordinary uncommitted changes are not carried over;
+   only files matching copyFiles are copied.
+
+   To select a configuration explicitly (place Loom options before the command):
+
+   git loom --config /path/to/primary/.git-loom.json doctor
+   git loom --repo ../platform status
+
+   A relative --config path is resolved from the current directory. Keep the file
+   inside the primary repository; peer paths remain relative to its repository root.
+   From a primary-repository subdirectory, Loom still uses the root configuration.
+   Running inside a peer does not automatically discover the primary configuration.
+
+4. Keep local files out of Git using your project's .gitignore.
+
+   copyFiles does not change .gitignore. Commit .git-loom.json to share the setup,
+   while keeping local configuration files ignored as appropriate for your project.
+
+This command only prints this guide; it does not create or modify any files.

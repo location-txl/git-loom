@@ -2,6 +2,14 @@ use crate::{Result, copy, git};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub fn guide(args: &[String]) -> Result<i32> {
+    if !args.is_empty() {
+        return Err("Usage: git loom config".into());
+    }
+    print!("{}", include_str!("../docs/config.txt"));
+    Ok(0)
+}
+
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {

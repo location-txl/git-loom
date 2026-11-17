@@ -19,7 +19,7 @@ _git-loom() {
     loom_words=(git-loom "${loom_words[@]:2}")
     (( loom_current-- ))
   fi
-  commands=('status:Show status' 'branch:Manage branches' 'switch:Switch branches' 'checkout:Native checkout' 'diff:Show differences' 'worktree:Manage worktrees' 'doctor:Check configuration' 'completions:Install completions')
+  commands=('config:Show the configuration guide' 'status:Show status' 'branch:Manage branches' 'switch:Switch branches' 'checkout:Native checkout' 'diff:Show differences' 'worktree:Manage worktrees' 'doctor:Check configuration' 'completions:Install completions')
   while (( i < loom_current )); do
     case ${loom_words[i]} in
       --repo|--config)
@@ -40,6 +40,7 @@ _git-loom() {
     return
   fi
   case $sub in
+    config) return;;
     doctor) compadd -- --json; return;;
     completions)
       if [[ ${loom_words[loom_current-1]} == --dir ]]; then _files -/; else compadd -- zsh --install --dir; fi

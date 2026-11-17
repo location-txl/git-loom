@@ -51,6 +51,26 @@ fn fail(path: &Path, args: &[&str]) -> Output {
     assert!(!o.status.success(), "unexpected success {args:?}");
     o
 }
+
+#[test]
+fn config_guide_works_without_loading_a_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = ok(dir.path(), &["config"]);
+    let guide = String::from_utf8(output.stdout).unwrap();
+    assert!(guide.contains(".git-loom.json"));
+    assert!(guide.contains("branchPrefix"));
+    assert!(guide.contains("git loom doctor"));
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    fs::write(dir.path().join(".git-loom.json"), "invalid JSON").unwrap();
+    ok(dir.path(), &["config"]);
+    let output = fail(dir.path(), &["config", "init"]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Usage: git loom config"));
+    assert_eq!(
+        fs::read_to_string(dir.path().join(".git-loom.json")).unwrap(),
+        "invalid JSON"
+    );
+}
+
 struct Fixture {
     _dir: TempDir,
     root: PathBuf,

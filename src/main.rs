@@ -15,7 +15,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
     version,
     about = "Manage Git work environments, linked repositories, and local configuration",
     arg_required_else_help = true,
-    after_help = "Commands:\n  status       Show working tree status\n  branch       List, create, or delete branches\n  switch       Switch branches\n  checkout     Switch branches or restore files\n  diff         Show changes\n  worktree     Add, list, or remove work environments\n  doctor       Check configuration and environment health\n  completions  Print or install shell completions\n\nPlace Loom options before COMMAND. Arguments after COMMAND are passed to that command.",
+    after_help = "Commands:\n  config       Show the configuration guide\n  status       Show working tree status\n  branch       List, create, or delete branches\n  switch       Switch branches\n  checkout     Switch branches or restore files\n  diff         Show changes\n  worktree     Add, list, or remove work environments\n  doctor       Check configuration and environment health\n  completions  Print or install shell completions\n\nPlace Loom options before COMMAND. Arguments after COMMAND are passed to that command.",
     trailing_var_arg = true
 )]
 struct Cli {
@@ -35,6 +35,9 @@ struct Cli {
     args: Vec<String>,
 }
 fn run(cli: Cli) -> Result<i32> {
+    if cli.command == "config" {
+        return config::guide(&cli.args);
+    }
     if cli.command == "completions" {
         return completions::run(&cli.args, cli.dry_run);
     }

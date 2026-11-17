@@ -16,6 +16,8 @@ git loom --version
 
 ## 配置
 
+运行 `git loom config` 查看内置英文配置指南，包含单仓库和关联仓库示例、字段说明及验证步骤。该命令可在仓库外使用，不会创建或修改文件。
+
 在主仓库根目录创建并提交 `.git-loom.json`，可直接参考 `examples/android.git-loom.json`：
 
 ```json
