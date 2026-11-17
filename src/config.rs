@@ -1,0 +1,124 @@
+use crate::{Result, copy, git};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+#[derive(Default, Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Config {
+    #[serde(default)]
+    pub copy_files: Vec<String>,
+    #[serde(default)]
+    pub peers: Vec<Peer>,
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Peer {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub branch_prefix: String,
+    #[serde(default)]
+    pub tag_prefix: String,
+    #[serde(default)]
+    pub copy_files: Vec<String>,
+}
+#[derive(Debug, Clone)]
+pub struct Repo {
+    pub path: PathBuf,
+    pub name: String,
+    pub branch_prefix: String,
+    pub tag_prefix: String,
+    pub copy_files: Vec<String>,
+}
+pub struct Context {
+    pub root: PathBuf,
+    pub config_path: PathBuf,
+    pub repos: Vec<Repo>,
+    pub mapping: bool,
+}
+impl Context {
+    pub fn load(config_path: Option<&Path>, selected: Option<&str>) -> Result<Self> {
+        let explicit_config = config_path.is_some();
+        let cwd = std::env::current_dir()?;
+        let base = match config_path {
+            Some(p) => cwd.join(p).parent().unwrap().to_path_buf(),
+            None => cwd.clone(),
+        };
+        let root =
+            PathBuf::from(git::output(&base, &["rev-parse", "--show-toplevel"])?).canonicalize()?;
+        let config_path = config_path
+            .map(|p| cwd.join(p))
+            .unwrap_or_else(|| root.join(".git-loom.json"));
+        let cfg: Config = if config_path.exists() {
+            serde_json::from_slice(&std::fs::read(&config_path)?)?
+        } else if explicit_config {
+            return Err("指定配置文件不存在".into());
+        } else {
+            Config::default()
+        };
+        let mut repos = vec![Repo {
+            path: root.clone(),
+            name: ".".into(),
+            branch_prefix: String::new(),
+            tag_prefix: String::new(),
+            copy_files: cfg.copy_files,
+        }];
+        for peer in cfg.peers {
+            if peer.path.is_absolute() {
+                return Err("peer.path 必须是相对路径".into());
+            }
+            let path = root
+                .join(&peer.path)
+                .canonicalize()
+                .map_err(|e| format!("peer {}: {e}", peer.path.display()))?;
+            let actual = PathBuf::from(git::output(&path, &["rev-parse", "--show-toplevel"])?)
+                .canonicalize()?;
+            if path != actual {
+                return Err(format!("peer 必须指向仓库根目录：{}", path.display()).into());
+            }
+            repos.push(Repo {
+                path,
+                name: peer.path.to_string_lossy().into_owned(),
+                branch_prefix: peer.branch_prefix,
+                tag_prefix: peer.tag_prefix,
+                copy_files: peer.copy_files,
+            });
+        }
+        let mut common_dirs = Vec::new();
+        for (i, repo) in repos.iter().enumerate() {
+            for prior in &repos[..i] {
+                if repo.path.starts_with(&prior.path) || prior.path.starts_with(&repo.path) {
+                    return Err("成员仓库目录重复或嵌套".into());
+                }
+            }
+            let common = git::common(&repo.path)?;
+            if common_dirs.contains(&common) {
+                return Err("同一 Git 仓库不能重复关联".into());
+            }
+            common_dirs.push(common);
+            for prefix in [&repo.branch_prefix, &repo.tag_prefix] {
+                git::output(
+                    &repo.path,
+                    &[
+                        "check-ref-format",
+                        &format!("refs/heads/{prefix}loom-check"),
+                    ],
+                )?;
+            }
+            copy::patterns(&repo.copy_files)?;
+        }
+        let mapping = selected.is_none() && repos.len() > 1;
+        if let Some(selected) = selected {
+            let target = root.join(selected).canonicalize()?;
+            repos.retain(|r| r.path == target);
+            if repos.is_empty() {
+                return Err("--repo 不是配置中的成员".into());
+            }
+        }
+        Ok(Self {
+            root,
+            config_path,
+            repos,
+            mapping,
+        })
+    }
+}

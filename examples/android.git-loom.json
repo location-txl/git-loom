@@ -1,0 +1,11 @@
+{
+  "copyFiles": ["local.properties", ".env", ".env.*"],
+  "peers": [
+    {
+      "path": "../platform",
+      "branchPrefix": "tob/",
+      "tagPrefix": "tob/",
+      "copyFiles": ["local.properties", ".env", ".env.*"]
+    }
+  ]
+}

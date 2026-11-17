@@ -1,0 +1,69 @@
+#compdef git-loom
+# git-loom managed completion v1
+
+_git_loom_register() {
+  (( $+functions[compdef] )) || return 0
+  compdef _git-loom git-loom
+  local -a existing
+  zstyle -a ':completion:*:*:git:*' user-commands existing
+  if (( ! ${existing[(I)loom:*]} )); then
+    zstyle ':completion:*:*:git:*' user-commands "${existing[@]}" 'loom:管理 Git 工作环境'
+  fi
+}
+
+_git-loom() {
+  local -a loom_words global_args candidates commands
+  local loom_current=$CURRENT i=2 sub='' action='' kind=refs
+  loom_words=("${words[@]}")
+  if [[ ${loom_words[1]} == git ]]; then
+    loom_words=(git-loom "${loom_words[@]:2}")
+    (( loom_current-- ))
+  fi
+  commands=('status:查看状态' 'branch:管理分支' 'switch:切换分支' 'checkout:原生检出' 'diff:查看差异' 'worktree:管理工作树' 'doctor:检查配置' 'completions:安装补全')
+  while (( i < loom_current )); do
+    case ${loom_words[i]} in
+      --repo|--config)
+        if (( i+1 < loom_current )); then global_args+=("${loom_words[i]}" "${loom_words[i+1]}"); fi
+        (( i += 2 ));;
+      --dry-run) (( i++ ));;
+      *) sub=${loom_words[i]}; break;;
+    esac
+  done
+  if [[ ${loom_words[loom_current-1]} == --repo ]]; then
+    candidates=("${(@f)$(git-loom "${global_args[@]}" __complete repos 2>/dev/null)}")
+    _describe '仓库' candidates; return
+  fi
+  if [[ ${loom_words[loom_current-1]} == --config ]]; then _files; return; fi
+  if [[ -z $sub ]]; then
+    _describe '命令' commands
+    compadd -- --repo --config --dry-run --help --version
+    return
+  fi
+  case $sub in
+    doctor) compadd -- --json; return;;
+    completions)
+      if [[ ${loom_words[loom_current-1]} == --dir ]]; then _files -/; else compadd -- zsh --install --dir; fi
+      return;;
+    worktree)
+      action=${loom_words[i+1]}
+      if (( loom_current == i+1 )); then compadd -- add list remove; return; fi
+      if [[ $action == remove ]]; then kind=worktrees; compadd -- --force
+      elif [[ $action == add ]]; then compadd -- -b --detach; _files -/
+      else return; fi;;
+  esac
+  if (( ${loom_words[(I)--]} > i )); then _files; return; fi
+  candidates=("${(@f)$(git-loom "${global_args[@]}" __complete "$kind" 2>/dev/null)}")
+  compadd -a candidates
+  _files
+  # 原生选项交给系统 Git 补全，Loom 的逻辑引用由上面的候选补充。
+  if [[ ${loom_words[loom_current]} == -* && $sub != worktree ]]; then
+    local -a words=(git "${loom_words[@]:$((i-1))}")
+    local CURRENT=$((loom_current-i+2))
+    _git
+  fi
+}
+
+# autoload 文件首次调用时执行分派；eval 加载时仅定义函数。
+if [[ $ZSH_EVAL_CONTEXT == *shfunc* ]]; then
+  _git-loom "$@"
+fi

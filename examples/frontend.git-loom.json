@@ -1,0 +1,3 @@
+{
+  "copyFiles": [".env", ".env.*", "apps/**/.env.local"]
+}

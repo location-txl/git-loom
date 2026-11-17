@@ -1,0 +1,16 @@
+[package]
+name = "git-loom"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Git 工作环境与关联仓库管理"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+globset = "0.4"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
