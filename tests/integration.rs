@@ -531,7 +531,7 @@ fn copy_failure_preserves_created_status_and_stops_peers() {
         &f.a,
         &["worktree", "add", f.target().to_str().unwrap(), "-b", "new"],
     );
-    assert!(String::from_utf8_lossy(&o.stderr).contains("本地配置复制失败"));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("copying local configuration failed"));
     assert!(f.target().join("robot food/.git").exists());
     assert!(!f.target().join("platform").exists());
     ok(

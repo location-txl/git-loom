@@ -77,7 +77,9 @@ fn absolute(path: &str) -> Result<PathBuf> {
     } else {
         let mut ancestor = result.as_path();
         while !ancestor.exists() {
-            ancestor = ancestor.parent().ok_or("目标没有可用父目录")?;
+            ancestor = ancestor
+                .parent()
+                .ok_or("Target has no usable parent directory")?;
         }
         Ok(ancestor
             .canonicalize()?
@@ -90,10 +92,10 @@ pub fn run(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         Some("remove") => remove(ctx, &args[1..], dry),
         Some("list") => {
             for group in groups(ctx)? {
-                println!("环境：{}", group.target.display());
+                println!("Environment: {}", group.target.display());
                 for member in group.members {
                     println!(
-                        "  {} [创建={} 配置={}]",
+                        "  {} [created={} configured={}]",
                         member.target.display(),
                         member.created,
                         member.copied
@@ -101,13 +103,13 @@ pub fn run(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
                 }
             }
             for repo in &ctx.repos {
-                println!("仓库：{}（Git 实际登记）", repo.path.display());
+                println!("Repository: {} (registered with Git)", repo.path.display());
                 println!("{}", git::output(&repo.path, &["worktree", "list"])?);
             }
             Ok(0)
         }
         _ => Err(
-            "用法：git loom worktree add <目录> [-b 分支] [起点] | list | remove <目录> [--force]"
+            "Usage: git loom worktree add <DIRECTORY> [-b BRANCH] [START-POINT] | list | remove <DIRECTORY> [--force]"
                 .into(),
         ),
     }
@@ -122,31 +124,36 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         match args[i].as_str() {
             "-b" => {
                 i += 1;
-                branch = Some(args.get(i).ok_or("-b 缺少分支")?.clone());
+                branch = Some(args.get(i).ok_or("-b requires a branch")?.clone());
             }
             "--detach" => options.push("--detach".to_string()),
-            a if a.starts_with('-') => return Err(format!("worktree add 未支持参数 {a}").into()),
+            a if a.starts_with('-') => {
+                return Err(format!("Unsupported worktree add argument {a}").into());
+            }
             a if path.is_none() => path = Some(a.to_string()),
             a if start.is_none() => start = Some(a.to_string()),
-            _ => return Err("多余的 worktree 参数".into()),
+            _ => return Err("Unexpected worktree argument".into()),
         }
         i += 1;
     }
-    let target = absolute(&path.ok_or("缺少目标目录")?)?;
+    let target = absolute(&path.ok_or("Missing target directory")?)?;
     if target.exists() {
-        return Err("目标目录已经存在，请使用新的环境目录".into());
+        return Err("Target directory already exists; use a new environment directory".into());
     }
     let mut common = ctx.repos[0].path.clone();
     for repo in &ctx.repos {
         while !repo.path.starts_with(&common) {
             if !common.pop() {
-                return Err("仓库不在同一文件系统根目录".into());
+                return Err("Repositories do not share a filesystem root".into());
             }
         }
     }
     let mut records = groups(ctx)?;
     if records.iter().any(|g| g.target == target) {
-        return Err("目标已有 Loom 创建记录，请先检查或删除该记录对应的环境".into());
+        return Err(
+            "Target already has a Loom record; inspect or remove the recorded environment first"
+                .into(),
+        );
     }
     let mut group = Group {
         target: target.clone(),
@@ -161,7 +168,7 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
             target.join(repo.path.strip_prefix(&common)?)
         };
         if destination.exists() {
-            return Err(format!("目标已存在：{}", destination.display()).into());
+            return Err(format!("Target already exists: {}", destination.display()).into());
         }
         let mut command = vec!["worktree".into(), "add".into()];
         command.extend(options.clone());
@@ -176,10 +183,12 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         let reference = match start.as_deref() {
             Some(r) => git::mapped(ctx, repo, r, false)?,
             None if new.is_some() || !options.is_empty() => "HEAD".into(),
-            None => return Err("请明确指定已有分支，或使用 -b 新分支".into()),
+            None => {
+                return Err("Specify an existing branch or use -b to create a new branch".into());
+            }
         };
         if !git::exists(&repo.path, &reference) {
-            return Err(format!("{} 缺少引用 {reference}", repo.path.display()).into());
+            return Err(format!("{} is missing reference {reference}", repo.path.display()).into());
         }
         if new.is_none() && options.is_empty() {
             git::branch_available(&repo.path, &reference, false)?;
@@ -193,7 +202,7 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
                             .unwrap_or(reference.as_str()),
                     )
             }) {
-                return Err(format!("分支 {reference} 已被检出").into());
+                return Err(format!("Branch {reference} is already checked out").into());
             }
         }
         command.push(destination.to_string_lossy().into_owned());
@@ -203,13 +212,13 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
             eprintln!("{}：{warning}", repo.name);
         }
         eprintln!(
-            "{} → {}，复制 {} 个文件",
+            "{} -> {}, copying {} files",
             repo.path.display(),
             destination.display(),
             matched.files.len()
         );
         if dry {
-            eprintln!("git {command:?}\n复制：{:?}", matched.files);
+            eprintln!("git {command:?}\nCopy: {:?}", matched.files);
         }
         copies.push(matched.files);
         commands.push(command);
@@ -240,7 +249,7 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         save(ctx, &records)?;
         if !status.success() {
             return Err(format!(
-                "创建 {} 失败（Git 登记={}）；运行 git loom worktree list 查看，未自动回滚",
+                "Failed to create {} (registered with Git={}); run git loom worktree list to inspect; no automatic rollback",
                 records[index].members[i].target.display(),
                 registered
             )
@@ -249,7 +258,7 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         let member = &records[index].members[i];
         copy::transfer(&member.source, &member.target, &copies[i]).map_err(|e| {
             format!(
-                "worktree {} 已创建，但本地配置复制失败：{e}",
+                "Worktree {} was created, but copying local configuration failed: {e}",
                 member.target.display()
             )
         })?;
@@ -258,20 +267,22 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
             if !config_target.exists() {
                 fs::copy(&ctx.config_path, &config_target)?;
             } else if fs::read(&ctx.config_path)? != fs::read(&config_target)? {
-                eprintln!("目标 .git-loom.json 与源配置不同，保留目标配置");
+                eprintln!(
+                    "Destination .git-loom.json differs from the source; keeping the destination configuration"
+                );
             }
         }
         records[index].members[i].copied = true;
         save(ctx, &records)?;
     }
-    println!("开发环境已准备好：{}", target.display());
+    println!("Development environment is ready: {}", target.display());
     Ok(0)
 }
 fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
     let force = args.iter().any(|a| a == "--force");
     let paths: Vec<_> = args.iter().filter(|a| a.as_str() != "--force").collect();
     if paths.len() != 1 {
-        return Err("用法：worktree remove <目录> [--force]".into());
+        return Err("Usage: worktree remove <DIRECTORY> [--force]".into());
     }
     let target = absolute(paths[0])?;
     let mut records = groups(ctx)?;
@@ -285,7 +296,7 @@ fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         for member in &records[i].members {
             if !selected.contains(&git::common(&member.source)?) {
                 return Err(
-                    "环境包含未选中的仓库，拒绝整组删除；请去掉 --repo 并确认全部成员后重试".into(),
+                    "Environment contains unselected repositories; refusing group removal. Remove --repo and review all members before retrying".into(),
                 );
             }
         }
@@ -298,7 +309,7 @@ fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
             copied: true,
         }]
     } else {
-        return Err("多仓库删除只接受 Loom 登记的环境".into());
+        return Err("Multi-repository removal requires a Loom-registered environment".into());
     };
     for member in members.iter().filter(|m| m.created) {
         let listing = trees(&member.source)?;
@@ -307,15 +318,19 @@ fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
             .find(|t| t.path == member.target)
             .ok_or_else(|| {
                 format!(
-                    "{} 未登记为 worktree，请运行 doctor",
+                    "{} is not registered as a worktree; run doctor",
                     member.target.display()
                 )
             })?;
         if listing.first().is_some_and(|t| t.path == tree.path) {
-            return Err("不能删除主工作树".into());
+            return Err("Cannot remove the main working tree".into());
         }
         if tree.locked {
-            return Err(format!("{} 已锁定，请显式使用原生 Git 解锁", tree.path.display()).into());
+            return Err(format!(
+                "{} is locked; unlock it explicitly using native Git",
+                tree.path.display()
+            )
+            .into());
         }
         if !force {
             git::clean(&member.target)?;
@@ -323,7 +338,7 @@ fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
     }
     if dry {
         for m in &members {
-            eprintln!("删除 {}，force={force}", m.target.display());
+            eprintln!("Remove {}, force={force}", m.target.display());
         }
         return Ok(0);
     }
@@ -339,7 +354,7 @@ fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         let status = command.arg(&member.target).status()?;
         if !status.success() {
             return Err(format!(
-                "删除 {} 失败，之前的删除已生效，未自动回滚",
+                "Failed to remove {}; previous removals remain in effect; no automatic rollback",
                 member.target.display()
             )
             .into());
@@ -356,6 +371,6 @@ fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
     if target.is_dir() && fs::read_dir(&target)?.next().is_none() {
         fs::remove_dir(&target)?;
     }
-    println!("已删除 worktree，分支保留：{}", target.display());
+    println!("Removed worktree; branch retained: {}", target.display());
     Ok(0)
 }

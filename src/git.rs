@@ -37,7 +37,7 @@ pub fn exists(path: &Path, reference: &str) -> bool {
 pub fn clean(repo: &Path) -> Result<()> {
     let status = output(repo, &["status", "--porcelain=v1", "--untracked-files=all"])?;
     if !status.is_empty() {
-        return Err(format!("{} 存在本地改动或文件：\n{status}", repo.display()).into());
+        return Err(format!("{} has local changes or files:\n{status}", repo.display()).into());
     }
     for marker in [
         "MERGE_HEAD",
@@ -49,7 +49,7 @@ pub fn clean(repo: &Path) -> Result<()> {
     ] {
         let p = output(repo, &["rev-parse", "--git-path", marker])?;
         if repo.join(p).exists() {
-            return Err(format!("{} 有未完成的 Git 操作", repo.display()).into());
+            return Err(format!("{} has an unfinished Git operation", repo.display()).into());
         }
     }
     Ok(())
@@ -81,7 +81,7 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
         && !exists(&ctx.root, &format!("refs/heads/{base}"))
         && !exists(&ctx.root, &format!("refs/tags/{base}"))
     {
-        return Err("多仓库不能映射 commit SHA，请使用 --repo".into());
+        return Err("Cannot map commit SHAs across repositories; use --repo".into());
     }
     if let Some(name) = base.strip_prefix("refs/heads/") {
         return Ok(format!("refs/heads/{}{name}{suffix}", repo.branch_prefix));
@@ -92,7 +92,10 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
     let branch = exists(&ctx.root, &format!("refs/heads/{base}"));
     let tag = exists(&ctx.root, &format!("refs/tags/{base}"));
     if branch && tag {
-        return Err(format!("引用 {base} 同时是分支和 tag，请使用完整 ref").into());
+        return Err(format!(
+            "Reference {base} is both a branch and a tag; use a fully qualified ref"
+        )
+        .into());
     }
     if branch {
         return Ok(format!("{}{base}{suffix}", repo.branch_prefix));
@@ -102,7 +105,9 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
     }
     let remote_ref = base.strip_prefix("refs/remotes/").unwrap_or(base);
     if exists(&ctx.root, &format!("refs/remotes/{remote_ref}")) {
-        let (remote, name) = remote_ref.split_once('/').ok_or("无效远程引用")?;
+        let (remote, name) = remote_ref
+            .split_once('/')
+            .ok_or("Invalid remote reference")?;
         let full = if base.starts_with("refs/remotes/") {
             "refs/remotes/"
         } else {
@@ -113,7 +118,7 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
             repo.branch_prefix
         ));
     }
-    // 让 checkout/switch 原生的远程分支推断继续生效。
+    // Preserve native checkout/switch remote branch inference.
     if output(
         &ctx.root,
         &["for-each-ref", "--format=%(refname)", "refs/remotes"],
@@ -127,7 +132,7 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
         return Ok(format!("{}{base}{suffix}", repo.branch_prefix));
     }
     if exists(&ctx.root, base) {
-        return Err(format!("无法跨仓库映射引用 {base}，请使用 --repo").into());
+        return Err(format!("Cannot map reference {base} across repositories; use --repo").into());
     }
     Ok(value.into())
 }
@@ -136,7 +141,7 @@ pub fn branch_available(repo: &Path, name: &str, creating: bool) -> Result<()> {
     let name = name.strip_prefix("refs/heads/").unwrap_or(name);
     output(repo, &["check-ref-format", "--branch", name])?;
     if creating && exists(repo, &format!("refs/heads/{name}")) {
-        return Err(format!("{} 已存在分支 {name}", repo.display()).into());
+        return Err(format!("{} already has branch {name}", repo.display()).into());
     }
     let listing = output(repo, &["worktree", "list", "--porcelain", "-z"])?;
     let mut current = "";
@@ -145,7 +150,9 @@ pub fn branch_available(repo: &Path, name: &str, creating: bool) -> Result<()> {
             current = p;
         }
         if line == format!("branch refs/heads/{name}") && Path::new(current) != repo {
-            return Err(format!("分支 {name} 已被 worktree {current} 占用").into());
+            return Err(
+                format!("Branch {name} is already checked out in worktree {current}").into(),
+            );
         }
     }
     Ok(())
@@ -191,7 +198,12 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
         ) && matches!(command, "switch" | "checkout")
         {
             i += 1;
-            let name = mapped(ctx, repo, args.get(i).ok_or("缺少新分支名称")?, true)?;
+            let name = mapped(
+                ctx,
+                repo,
+                args.get(i).ok_or("Missing new branch name")?,
+                true,
+            )?;
             result.new = Some(name.clone());
             result.reset = matches!(arg.as_str(), "-B" | "-C" | "--force-create");
             result.moving = true;
@@ -315,7 +327,7 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
                     | "--points-at"
             );
             if ctx.mapping && !known && !takes_value && !arg.starts_with("-U") {
-                return Err(format!("多仓库无法可靠解释选项 {arg}，请使用 --repo 原样调用").into());
+                return Err(format!("Cannot reliably interpret option {arg} across repositories; use --repo to pass it through").into());
             }
             if flag == "--pathspec-from-file" {
                 paths = true;
@@ -330,7 +342,7 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
             }
             if takes_value && !arg.contains('=') {
                 i += 1;
-                let value = args.get(i).ok_or("选项缺少参数")?;
+                let value = args.get(i).ok_or("Missing option argument")?;
                 result.args.push(
                     if matches!(flag, "--contains" | "--no-contains" | "--points-at") {
                         mapped(ctx, repo, value, false)?
@@ -392,7 +404,9 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
             && !paths
         {
             if ctx.mapping {
-                return Err(format!("{value} 可能是路径，请用 -- 分隔路径参数").into());
+                return Err(
+                    format!("{value} may be a path; use -- to separate path arguments").into(),
+                );
             }
             if command == "checkout" && !exists(&repo.path, value) {
                 result.moving = false;
@@ -416,7 +430,7 @@ pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Resu
         command,
         "status" | "branch" | "switch" | "checkout" | "diff"
     ) {
-        return Err(format!("未知命令 {command}").into());
+        return Err(format!("Unknown command {command}").into());
     }
     let plans = ctx
         .repos
@@ -456,7 +470,9 @@ pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Resu
                         .and_then(|r| r.split_once('/'))
                         .is_some_and(|(_, n)| n == target)
                 }) {
-                    return Err(format!("{} 缺少引用 {target}", repo.path.display()).into());
+                    return Err(
+                        format!("{} is missing reference {target}", repo.path.display()).into(),
+                    );
                 }
             }
         }
@@ -480,7 +496,7 @@ pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Resu
             && args.iter().any(|a| a == "--exit-code" || a == "--quiet");
         if current != 0 && !diff_found {
             eprintln!(
-                "已完成：{}；失败：{}；未执行：{}。未自动回滚，请检查各仓库 git status 后恢复。",
+                "Completed: {}; failed: {}; not executed: {}. No automatic rollback; check git status in each repository before recovering.",
                 ctx.repos[..i]
                     .iter()
                     .map(|r| r.name.as_str())

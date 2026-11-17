@@ -26,7 +26,7 @@ fn check(
 }
 pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
     if args.iter().any(|a| a != "--json") {
-        return Err("doctor 仅支持 --json".into());
+        return Err("doctor only supports --json".into());
     }
     let mut checks = Vec::new();
     match git::output(&std::env::current_dir()?, &["--version"]) {
@@ -36,7 +36,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
             "ERROR",
             None,
             e.to_string(),
-            "安装 Git 并加入 PATH",
+            "Install Git and add it to PATH",
         )),
     }
     match Context::load(path, None) {
@@ -45,7 +45,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
             "ERROR",
             None,
             e.to_string(),
-            "检查 JSON 字段、仓库路径、前缀及 glob；配置位置以 --config 或仓库根目录为准",
+            "Check JSON fields, repository paths, prefixes, and globs in the configuration selected by --config or the repository root",
         )),
         Ok(ctx) => {
             checks.push(check(
@@ -53,9 +53,9 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                 "OK",
                 Some(&ctx.root),
                 if ctx.config_path.exists() {
-                    "配置与仓库关系有效"
+                    "Configuration and repository relationships are valid"
                 } else {
-                    "无配置，按单仓库运行"
+                    "No configuration; using single-repository mode"
                 },
                 "",
             ));
@@ -73,7 +73,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                         "working-tree",
                         "OK",
                         Some(&repo.path),
-                        "工作区干净",
+                        "Working tree is clean",
                         "",
                     )),
                     Err(e) => checks.push(check(
@@ -81,7 +81,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                         "WARN",
                         Some(&repo.path),
                         e.to_string(),
-                        "切换分支前提交或自行处理本地改动",
+                        "Commit or resolve local changes before switching branches",
                     )),
                 }
                 match git::output(&repo.path, &["symbolic-ref", "--short", "HEAD"]) {
@@ -89,8 +89,8 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                         "branch",
                         "WARN",
                         Some(&repo.path),
-                        "当前为 detached HEAD",
-                        "检查是否需要切换到分支",
+                        "HEAD is detached",
+                        "Check whether you need to switch to a branch",
                     )),
                     Ok(branch) => {
                         let expected = primary_branch
@@ -102,11 +102,11 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                             if mismatch { "WARN" } else { "OK" },
                             Some(&repo.path),
                             format!(
-                                "当前分支：{branch}；预期：{}",
-                                expected.as_deref().unwrap_or("主仓库 detached")
+                                "Current branch: {branch}; expected: {}",
+                                expected.as_deref().unwrap_or("primary repository HEAD is detached")
                             ),
                             if mismatch {
-                                "按主仓库分支检查关联仓库"
+                                "Check linked repositories against the primary repository branch"
                             } else {
                                 ""
                             },
@@ -119,7 +119,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                             "copy-files",
                             "OK",
                             Some(&repo.path),
-                            format!("匹配 {} 个文件", matches.files.len()),
+                            format!("Matched {} files", matches.files.len()),
                             "",
                         ));
                         for warning in matches.warnings {
@@ -128,7 +128,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                                 "WARN",
                                 Some(&repo.path),
                                 warning,
-                                "检查 copyFiles 是否符合当前项目",
+                                "Check that copyFiles matches this project",
                             ));
                         }
                     }
@@ -137,7 +137,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                         "ERROR",
                         Some(&repo.path),
                         e.to_string(),
-                        "检查模式与文件权限",
+                        "Check patterns and file permissions",
                     )),
                 }
             }
@@ -147,7 +147,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                     "ERROR",
                     Some(&ctx.root),
                     e.to_string(),
-                    "检查 Git 公共目录内 loom/worktrees.json",
+                    "Check loom/worktrees.json in the Git common directory",
                 )),
                 Ok(groups) => {
                     for group in groups {
@@ -161,13 +161,13 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                                 if valid && member.copied { "OK" } else { "WARN" },
                                 Some(&member.target),
                                 format!(
-                                    "登记={} 实际={} 配置完成={}",
+                                    "recorded={} registered={} configured={}",
                                     member.created, registered, member.copied
                                 ),
                                 if valid && member.copied {
                                     ""
                                 } else {
-                                    "检查部分创建或原生 Git 删除后的记录；doctor 不自动修复"
+                                    "Check records after partial creation or removal with native Git; doctor does not repair them automatically"
                                 },
                             ));
                         }
@@ -189,7 +189,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
                 && l.contains("fpath")
                 && l.contains(".zsh/completions")
         });
-        checks.push(check("zsh-completions", if installed && configured { "OK" } else { "WARN" }, None, format!("默认目录补全文件存在={installed}；已知 .zshrc fpath 配置={configured}（静态检查，不代表当前 Shell 已加载）"), "运行 git loom completions zsh --install；当前终端执行 eval \"$(git loom completions zsh)\""));
+        checks.push(check("zsh-completions", if installed && configured { "OK" } else { "WARN" }, None, format!("completion file in default directory={installed}; known .zshrc fpath configuration={configured} (static check; does not confirm the current shell has loaded it)"), "Run git loom completions zsh --install; in the current shell, run eval \"$(git loom completions zsh)\""));
     }
     let code = i32::from(checks.iter().any(|c| c.level == "ERROR"));
     if args.iter().any(|a| a == "--json") {
@@ -200,14 +200,14 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
     } else {
         for item in checks {
             println!(
-                "[{}] {} {}：{}",
+                "[{}] {} {}: {}",
                 item.level,
                 item.id,
                 item.repo.as_deref().unwrap_or(""),
                 item.message
             );
             if !item.suggestion.is_empty() {
-                println!("  建议：{}", item.suggestion);
+                println!("  Suggestion: {}", item.suggestion);
             }
         }
     }

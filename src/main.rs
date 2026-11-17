@@ -11,19 +11,26 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Parser, Debug)]
 #[command(
+    bin_name = "git loom",
     version,
-    about = "管理 Git 工作环境、关联仓库与本地配置",
+    about = "Manage Git work environments, linked repositories, and local configuration",
+    arg_required_else_help = true,
+    after_help = "Commands:\n  status       Show working tree status\n  branch       List, create, or delete branches\n  switch       Switch branches\n  checkout     Switch branches or restore files\n  diff         Show changes\n  worktree     Add, list, or remove work environments\n  doctor       Check configuration and environment health\n  completions  Print or install shell completions\n\nPlace Loom options before COMMAND. Arguments after COMMAND are passed to that command.",
     trailing_var_arg = true
 )]
 struct Cli {
+    /// Read configuration from this file
     #[arg(long)]
     config: Option<PathBuf>,
+    /// Select one repository and use its actual reference names
     #[arg(long)]
     repo: Option<String>,
+    /// Preview supported operations without making changes
     #[arg(long)]
     dry_run: bool,
-    /// status / branch / switch / checkout / diff / worktree / doctor / completions
+    /// Command to execute (see below)
     command: String,
+    /// Arguments for the selected command
     #[arg(allow_hyphen_values = true)]
     args: Vec<String>,
 }
@@ -65,7 +72,7 @@ fn main() {
     let code = match run(cli) {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("错误：{error}");
+            eprintln!("error: {error}");
             1
         }
     };

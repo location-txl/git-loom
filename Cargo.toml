@@ -3,7 +3,7 @@ name = "git-loom"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
-description = "Git 工作环境与关联仓库管理"
+description = "Manage Git work environments and linked repositories"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -51,7 +51,7 @@ impl Context {
         let cfg: Config = if config_path.exists() {
             serde_json::from_slice(&std::fs::read(&config_path)?)?
         } else if explicit_config {
-            return Err("指定配置文件不存在".into());
+            return Err("The specified configuration file does not exist".into());
         } else {
             Config::default()
         };
@@ -64,7 +64,7 @@ impl Context {
         }];
         for peer in cfg.peers {
             if peer.path.is_absolute() {
-                return Err("peer.path 必须是相对路径".into());
+                return Err("peer.path must be a relative path".into());
             }
             let path = root
                 .join(&peer.path)
@@ -73,7 +73,9 @@ impl Context {
             let actual = PathBuf::from(git::output(&path, &["rev-parse", "--show-toplevel"])?)
                 .canonicalize()?;
             if path != actual {
-                return Err(format!("peer 必须指向仓库根目录：{}", path.display()).into());
+                return Err(
+                    format!("peer must point to a repository root: {}", path.display()).into(),
+                );
             }
             repos.push(Repo {
                 path,
@@ -87,12 +89,12 @@ impl Context {
         for (i, repo) in repos.iter().enumerate() {
             for prior in &repos[..i] {
                 if repo.path.starts_with(&prior.path) || prior.path.starts_with(&repo.path) {
-                    return Err("成员仓库目录重复或嵌套".into());
+                    return Err("Member repository directories overlap or are nested".into());
                 }
             }
             let common = git::common(&repo.path)?;
             if common_dirs.contains(&common) {
-                return Err("同一 Git 仓库不能重复关联".into());
+                return Err("The same Git repository cannot be linked more than once".into());
             }
             common_dirs.push(common);
             for prefix in [&repo.branch_prefix, &repo.tag_prefix] {
@@ -111,7 +113,7 @@ impl Context {
             let target = root.join(selected).canonicalize()?;
             repos.retain(|r| r.path == target);
             if repos.is_empty() {
-                return Err("--repo 不是配置中的成员".into());
+                return Err("--repo does not match a configured member".into());
             }
         }
         Ok(Self {

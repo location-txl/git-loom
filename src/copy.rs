@@ -15,7 +15,7 @@ pub fn patterns(patterns: &[String]) -> Result<GlobSet> {
             || pattern.contains('\\')
         {
             return Err(format!(
-                "非法复制模式：{pattern}；必须是仓库内的相对路径，不能包含 .git 或 .."
+                "Invalid copy pattern: {pattern}; use a repository-relative path without .git or .."
             )
             .into());
         }
@@ -39,7 +39,7 @@ pub fn scan(root: &Path, pats: &[String]) -> Result<Matches> {
     if set.is_match(".git") || set.is_match(".git/config") || set.is_match(".git/objects/example") {
         result
             .warnings
-            .push("模式覆盖 Git 元数据；.git 始终排除".into());
+            .push("The pattern includes Git metadata; .git is always excluded".into());
     }
     let mut counts = vec![0; pats.len()];
     let max_depth = if pats.iter().any(|p| p.contains("**")) {
@@ -62,7 +62,7 @@ pub fn scan(root: &Path, pats: &[String]) -> Result<Matches> {
         if entry.file_type().is_symlink() {
             result
                 .warnings
-                .push(format!("跳过符号链接 {}", relative.display()));
+                .push(format!("Skipping symlink {}", relative.display()));
         } else if entry.file_type().is_file() {
             for i in matches {
                 counts[i] += 1;
@@ -72,7 +72,9 @@ pub fn scan(root: &Path, pats: &[String]) -> Result<Matches> {
     }
     for (pattern, count) in pats.iter().zip(counts) {
         if count == 0 {
-            result.warnings.push(format!("没有匹配文件：{pattern}"));
+            result
+                .warnings
+                .push(format!("No matching files: {pattern}"));
         }
     }
     result.files.sort();
@@ -83,18 +85,22 @@ pub fn transfer(source: &Path, target: &Path, files: &[PathBuf]) -> Result<()> {
         let src = source.join(relative);
         let dst = target.join(relative);
         if fs::symlink_metadata(&dst).is_ok() {
-            eprintln!("保留已有文件：{}", dst.display());
+            eprintln!("Keeping existing file: {}", dst.display());
             continue;
         }
         let mut parent = target.to_path_buf();
         for part in relative.parent().unwrap_or(Path::new("")).components() {
             if !matches!(part, Component::Normal(_)) {
-                return Err("复制路径越界".into());
+                return Err("Copy path escapes the repository".into());
             }
             parent.push(part);
             if let Ok(meta) = fs::symlink_metadata(&parent) {
                 if meta.file_type().is_symlink() || !meta.is_dir() {
-                    return Err(format!("目标父路径不是普通目录：{}", parent.display()).into());
+                    return Err(format!(
+                        "Destination parent is not a regular directory: {}",
+                        parent.display()
+                    )
+                    .into());
                 }
             } else {
                 fs::create_dir(&parent)?;
@@ -102,7 +108,7 @@ pub fn transfer(source: &Path, target: &Path, files: &[PathBuf]) -> Result<()> {
         }
         let meta = fs::symlink_metadata(&src)?;
         if !meta.is_file() {
-            return Err(format!("源文件已变化：{}", src.display()).into());
+            return Err(format!("Source file has changed: {}", src.display()).into());
         }
         let mut input = fs::File::open(&src)?;
         let mut output = fs::OpenOptions::new()
@@ -111,7 +117,7 @@ pub fn transfer(source: &Path, target: &Path, files: &[PathBuf]) -> Result<()> {
             .open(&dst)?;
         fs::set_permissions(&dst, meta.permissions())?;
         std::io::copy(&mut input, &mut output)?;
-        eprintln!("已复制：{}", dst.display());
+        eprintln!("Copied: {}", dst.display());
     }
     Ok(())
 }
