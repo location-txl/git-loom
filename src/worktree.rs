@@ -21,6 +21,27 @@ pub struct Group {
 fn registry(ctx: &Context) -> Result<PathBuf> {
     Ok(git::common(&ctx.root)?.join("loom/worktrees.json"))
 }
+// Keep the lock on a stable inode: the JSON itself is atomically replaced.
+fn lock_registry(ctx: &Context, dry: bool) -> Result<Option<fs::File>> {
+    if dry {
+        return Ok(None);
+    }
+    let path = registry(ctx)?.with_file_name("worktrees.lock");
+    fs::create_dir_all(path.parent().ok_or("Invalid worktree registry path")?)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(Some(lock)),
+        Err(fs::TryLockError::WouldBlock) => Err(
+            "Another git loom worktree operation is active for this repository; retry after it finishes".into(),
+        ),
+        Err(fs::TryLockError::Error(error)) => Err(error.into()),
+    }
+}
 pub fn groups(ctx: &Context) -> Result<Vec<Group>> {
     let path = registry(ctx)?;
     if path.exists() {
@@ -115,6 +136,7 @@ pub fn run(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
     }
 }
 fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
+    let _registry_lock = lock_registry(ctx, dry)?;
     let mut path = None;
     let mut branch = None;
     let mut start = None;
@@ -279,6 +301,7 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
     Ok(0)
 }
 fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
+    let _registry_lock = lock_registry(ctx, dry)?;
     let force = args.iter().any(|a| a == "--force");
     let paths: Vec<_> = args.iter().filter(|a| a.as_str() != "--force").collect();
     if paths.len() != 1 {
