@@ -18,7 +18,7 @@ main() {
         v[0-9]*)
             case "$version" in *[!a-zA-Z0-9._-]*) echo '错误：无效版本号。' >&2; exit 1 ;; esac
             release_path=download/$version ;;
-        *) echo '错误：版本号须以 v 开头，例如 v0.1.0。' >&2; exit 1 ;;
+        *) echo '错误：版本号须以 v 开头，例如 v0.2.0。' >&2; exit 1 ;;
     esac
     case "$install_dir" in
         /*) ;;
@@ -51,6 +51,8 @@ main() {
         *":$install_dir:"*) echo '运行 git loom --help 开始使用。' ;;
         *)
             echo '请将安装目录加入 PATH（可写入 ~/.zshrc），然后运行 git loom --help：'
+            # Print a command for the user to run later, not this process's PATH.
+            # shellcheck disable=SC2016
             printf '  export PATH="%s:$PATH"\n' "$install_dir"
             ;;
     esac

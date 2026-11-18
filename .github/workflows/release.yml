@@ -1,6 +1,7 @@
-name: 发布 macOS ARM 安装包
+name: CI and macOS ARM release
 
 on:
+  pull_request:
   push:
     branches: [main]
     tags: ['v*']
@@ -11,49 +12,88 @@ on:
       - 'docs/config.txt'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/release.yml'
+      - 'install.sh'
+      - '.github/workflows/**'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check installer scripts
+        run: |
+          shellcheck install.sh tests/install.sh
+          sh -n install.sh
+          sh -n tests/install.sh
+          sh tests/install.sh
+  build:
     runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       RUSTUP_TOOLCHAIN: '1.90.0'
     steps:
-      - uses: actions/checkout@v4
-      - name: 安装 Rust
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust
         run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy --target aarch64-apple-darwin
-      - name: 复用 Rust 构建缓存
-        uses: Swatinem/rust-cache@v2
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           env-vars: 'CARGO CC CFLAGS CXX CMAKE RUST MACOSX_DEPLOYMENT_TARGET'
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: 检查发布版本
+      - name: Validate release version
         if: startsWith(github.ref, 'refs/tags/')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
           test "$RELEASE_TAG" = "v$version"
-      - name: 检查与测试
+      - name: Check and test
         run: |
           cargo +1.90.0 fmt --check
           cargo +1.90.0 clippy --locked --all-targets -- -D warnings
           cargo +1.90.0 test --locked
-      - name: 构建与打包
+      - name: Build and package
         run: |
           cargo +1.90.0 build --locked --release --target aarch64-apple-darwin
-          target/aarch64-apple-darwin/release/git-loom --version
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
+          test "$(target/aarch64-apple-darwin/release/git-loom --version)" = "git-loom $version"
+          sh tests/install.sh target/aarch64-apple-darwin/release/git-loom
           mkdir dist
           tar -czf dist/git-loom-aarch64-apple-darwin.tar.gz -C target/aarch64-apple-darwin/release git-loom
           cd dist
           shasum -a 256 git-loom-aarch64-apple-darwin.tar.gz > git-loom-aarch64-apple-darwin.tar.gz.sha256
-      - name: 发布 Release
+      - name: Transfer release assets
         if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [shell, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Verify assets
+        working-directory: dist
+        run: shasum -a 256 -c git-loom-aarch64-apple-darwin.tar.gz.sha256
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
