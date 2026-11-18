@@ -2,29 +2,70 @@ use crate::{Result, config::Context, git, worktree};
 use std::{fs, path::PathBuf};
 const SCRIPT: &str = include_str!("../completions/_git-loom");
 const MARKER: &str = "# git-loom managed completion v1";
-pub fn run(args: &[String], dry: bool) -> Result<i32> {
-    if args.first().map(String::as_str) != Some("zsh") {
-        return Err("Usage: completions zsh [--install] [--dir PATH]".into());
+// Keep static completion vocabulary in sync with clap's actual command tree.
+fn script() -> String {
+    use clap::CommandFactory;
+    let mut cli = crate::Cli::command();
+    cli.build();
+    fn flags(command: &clap::Command) -> String {
+        command
+            .get_arguments()
+            .flat_map(|arg| {
+                let short = arg.get_short().map(|s| format!("-{s}"));
+                let long = arg.get_long().map(|s| format!("--{s}"));
+                short.into_iter().chain(long)
+            })
+            .map(|flag| shell_quote(&flag))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
-    let mut install = false;
-    let mut directory = None;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--install" => install = true,
-            "--dir" => {
-                i += 1;
-                directory = Some(PathBuf::from(args.get(i).ok_or("--dir requires a path")?));
-            }
-            a => return Err(format!("Unknown completion argument {a}").into()),
-        }
-        i += 1;
-    }
+    let mut commands: Vec<_> = cli
+        .get_subcommands()
+        .filter(|s| !s.is_hide_set())
+        .map(|s| {
+            shell_quote(&format!(
+                "{}:{}",
+                s.get_name(),
+                s.get_about().map(ToString::to_string).unwrap_or_default()
+            ))
+        })
+        .collect();
+    commands.extend(
+        crate::GIT_COMMANDS
+            .iter()
+            .map(|(name, about)| shell_quote(&format!("{name}:{about}"))),
+    );
+    let worktree = cli.find_subcommand("worktree").unwrap();
+    let completion = cli.find_subcommand("completions").unwrap();
+    let zsh = completion.find_subcommand("zsh").unwrap();
+    let actions = worktree
+        .get_subcommands()
+        .map(|s| shell_quote(s.get_name()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    SCRIPT
+        .replace("@LOOM_COMMANDS@", &commands.join(" "))
+        .replace("@LOOM_FLAGS@", &flags(&cli))
+        .replace(
+            "@DOCTOR_FLAGS@",
+            &flags(cli.find_subcommand("doctor").unwrap()),
+        )
+        .replace("@COMPLETION_FLAGS@", &flags(zsh))
+        .replace("@WORKTREE_COMMANDS@", &actions)
+        .replace(
+            "@WORKTREE_ADD_FLAGS@",
+            &flags(worktree.find_subcommand("add").unwrap()),
+        )
+        .replace(
+            "@WORKTREE_REMOVE_FLAGS@",
+            &flags(worktree.find_subcommand("remove").unwrap()),
+        )
+}
+
+pub fn run(install: bool, directory: Option<PathBuf>, dry: bool) -> Result<i32> {
+    let script = script();
     if !install {
-        if directory.is_some() {
-            return Err("--dir requires --install".into());
-        }
-        print!("{SCRIPT}\n_git_loom_register\n");
+        print!("{script}\n_git_loom_register\n");
         return Ok(0);
     }
     let directory = match directory {
@@ -50,7 +91,7 @@ pub fn run(args: &[String], dry: bool) -> Result<i32> {
         return Ok(0);
     }
     fs::create_dir_all(&directory)?;
-    fs::write(&target, SCRIPT)?;
+    fs::write(&target, script)?;
     println!("Installed: {}", target.display());
     println!("Current shell: eval \"$(git loom completions zsh)\"");
     println!(

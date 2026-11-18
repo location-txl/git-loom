@@ -3,6 +3,7 @@ use crate::{
     config::{Context, Repo},
 };
 use std::{
+    ffi::OsString,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -158,12 +159,175 @@ pub fn branch_available(repo: &Path, name: &str, creating: bool) -> Result<()> {
     Ok(())
 }
 
+// A conservative, command-specific subset. Optional values must use =; options
+// requiring the next argument are identified separately. Unknown mapped grammar
+// is refused rather than interpreted as a revision or a pathname.
+fn option_kind(command: &str, flag: &str) -> (bool, bool) {
+    let known = match command {
+        "switch" => matches!(
+            flag,
+            "-q" | "--quiet"
+                | "-f"
+                | "--force"
+                | "-m"
+                | "--merge"
+                | "--detach"
+                | "-d"
+                | "--discard-changes"
+                | "--guess"
+                | "--no-guess"
+                | "--ignore-other-worktrees"
+                | "--recurse-submodules"
+                | "--no-recurse-submodules"
+                | "--progress"
+                | "--no-progress"
+                | "--track"
+                | "-t"
+                | "--no-track"
+        ),
+        "checkout" => matches!(
+            flag,
+            "-q" | "--quiet"
+                | "-f"
+                | "--force"
+                | "-m"
+                | "--merge"
+                | "--detach"
+                | "-d"
+                | "--guess"
+                | "--no-guess"
+                | "--ignore-other-worktrees"
+                | "--recurse-submodules"
+                | "--no-recurse-submodules"
+                | "--progress"
+                | "--no-progress"
+                | "-p"
+                | "--patch"
+                | "--ours"
+                | "--theirs"
+                | "--overlay"
+                | "--no-overlay"
+                | "--ignore-skip-worktree-bits"
+                | "--pathspec-file-nul"
+                | "--track"
+                | "-t"
+                | "--no-track"
+                | "-l"
+        ),
+        "branch" => matches!(
+            flag,
+            "-q" | "--quiet"
+                | "-f"
+                | "--force"
+                | "-m"
+                | "-M"
+                | "--move"
+                | "-c"
+                | "-C"
+                | "--copy"
+                | "-d"
+                | "-D"
+                | "--delete"
+                | "--list"
+                | "-a"
+                | "--all"
+                | "-r"
+                | "--remotes"
+                | "-v"
+                | "-vv"
+                | "--show-current"
+                | "--color"
+                | "--no-color"
+                | "--abbrev"
+                | "--track"
+                | "-t"
+                | "--no-track"
+                | "-l"
+        ),
+        "status" => matches!(
+            flag,
+            "--porcelain"
+                | "--short"
+                | "-s"
+                | "--branch"
+                | "-b"
+                | "--untracked-files"
+                | "--ignored"
+        ),
+        "diff" => matches!(
+            flag,
+            "-q" | "--quiet"
+                | "-p"
+                | "--patch"
+                | "--cached"
+                | "--staged"
+                | "--stat"
+                | "--numstat"
+                | "--shortstat"
+                | "--name-only"
+                | "--name-status"
+                | "--raw"
+                | "--patch-with-stat"
+                | "--check"
+                | "--exit-code"
+                | "--color"
+                | "--no-color"
+                | "--word-diff"
+                | "--relative"
+                | "--binary"
+                | "--full-index"
+                | "--no-ext-diff"
+                | "--no-textconv"
+                | "--ignore-space-at-eol"
+                | "--ignore-all-space"
+                | "-w"
+                | "-b"
+                | "--minimal"
+                | "--patience"
+                | "--histogram"
+                | "--no-renames"
+                | "--find-renames"
+                | "--find-copies"
+                | "--abbrev"
+                | "-M"
+                | "-C"
+                | "-c"
+                | "-s"
+        ),
+        _ => false,
+    };
+    let takes_value = match command {
+        "switch" => flag == "--conflict",
+        "checkout" => matches!(flag, "--conflict" | "--pathspec-from-file"),
+        "branch" => matches!(
+            flag,
+            "--format" | "--sort" | "--contains" | "--no-contains" | "--points-at"
+        ),
+        "diff" => matches!(
+            flag,
+            "--output"
+                | "--diff-filter"
+                | "--src-prefix"
+                | "--dst-prefix"
+                | "--line-prefix"
+                | "--unified"
+                | "-U"
+                | "--word-diff-regex"
+                | "--inter-hunk-context"
+        ),
+        _ => false,
+    };
+    (known, takes_value)
+}
+
 struct Arguments {
     args: Vec<String>,
     moving: bool,
     target: Option<String>,
     new: Option<String>,
     reset: bool,
+    detached: bool,
+    deletion: Vec<String>,
 }
 fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Result<Arguments> {
     let mut result = Arguments {
@@ -172,7 +336,18 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
         target: None,
         new: None,
         reset: false,
+        detached: false,
+        deletion: Vec::new(),
     };
+    if command == "branch"
+        && ctx.mapping
+        && args
+            .iter()
+            .take_while(|a| a.as_str() != "--")
+            .any(|a| matches!(a.as_str(), "-d" | "-D" | "--delete"))
+    {
+        return deletion_arguments(ctx, repo, args, result);
+    }
     let mut positionals = Vec::new();
     let mut after = false;
     let mut paths = false;
@@ -222,111 +397,17 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
             if matches!(arg.as_str(), "-p" | "--patch") {
                 patch = true;
             }
-            if arg == "--detach" || arg == "-d" && command == "switch" {
+            if matches!(command, "switch" | "checkout") && matches!(arg.as_str(), "--detach" | "-d")
+            {
+                result.detached = true;
                 result.moving = true;
             }
             let flag = arg.split('=').next().unwrap();
-            let known = matches!(
-                flag,
-                "-q" | "--quiet"
-                    | "-f"
-                    | "--force"
-                    | "-m"
-                    | "--merge"
-                    | "--detach"
-                    | "-d"
-                    | "--discard-changes"
-                    | "--guess"
-                    | "--no-guess"
-                    | "--ignore-other-worktrees"
-                    | "--recurse-submodules"
-                    | "--no-recurse-submodules"
-                    | "--progress"
-                    | "--no-progress"
-                    | "-p"
-                    | "--patch"
-                    | "--ours"
-                    | "--theirs"
-                    | "--overlay"
-                    | "--no-overlay"
-                    | "--ignore-skip-worktree-bits"
-                    | "--pathspec-file-nul"
-                    | "--track"
-                    | "-t"
-                    | "--no-track"
-                    | "-l"
-                    | "--cached"
-                    | "--staged"
-                    | "--stat"
-                    | "--numstat"
-                    | "--shortstat"
-                    | "--name-only"
-                    | "--name-status"
-                    | "--raw"
-                    | "--patch-with-stat"
-                    | "--check"
-                    | "--exit-code"
-                    | "--color"
-                    | "--no-color"
-                    | "--word-diff"
-                    | "--relative"
-                    | "--binary"
-                    | "--full-index"
-                    | "--no-ext-diff"
-                    | "--no-textconv"
-                    | "--ignore-space-at-eol"
-                    | "--ignore-all-space"
-                    | "-w"
-                    | "-b"
-                    | "--minimal"
-                    | "--patience"
-                    | "--histogram"
-                    | "--no-renames"
-                    | "--find-renames"
-                    | "--find-copies"
-                    | "--abbrev"
-                    | "--list"
-                    | "-a"
-                    | "--all"
-                    | "-r"
-                    | "--remotes"
-                    | "-v"
-                    | "-vv"
-                    | "--show-current"
-                    | "-M"
-                    | "--move"
-                    | "-c"
-                    | "-C"
-                    | "--copy"
-                    | "-D"
-                    | "--delete"
-                    | "--porcelain"
-                    | "--short"
-                    | "-s"
-                    | "--branch"
-                    | "--untracked-files"
-                    | "--ignored"
-            );
-            let takes_value = matches!(
-                flag,
-                "--conflict"
-                    | "--pathspec-from-file"
-                    | "--output"
-                    | "--diff-filter"
-                    | "--src-prefix"
-                    | "--dst-prefix"
-                    | "--line-prefix"
-                    | "--unified"
-                    | "-U"
-                    | "--word-diff-regex"
-                    | "--inter-hunk-context"
-                    | "--format"
-                    | "--sort"
-                    | "--contains"
-                    | "--no-contains"
-                    | "--points-at"
-            );
-            if ctx.mapping && !known && !takes_value && !arg.starts_with("-U") {
+            let (known, takes_value) = option_kind(command, flag);
+            let attached_context = command == "diff"
+                && arg.starts_with("-U")
+                && arg[2..].bytes().all(|b| b.is_ascii_digit());
+            if ctx.mapping && !(known || takes_value || attached_context) {
                 return Err(format!("Cannot reliably interpret option {arg} across repositories; use --repo to pass it through").into());
             }
             if flag == "--pathspec-from-file" {
@@ -425,7 +506,126 @@ fn arguments(ctx: &Context, repo: &Repo, command: &str, args: &[String]) -> Resu
     }
     Ok(result)
 }
-pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Result<i32> {
+// Only this unambiguous subset is coordinated across repositories. Other branch
+// modes still use their existing parser or explicit --repo native pass-through.
+fn deletion_arguments(
+    ctx: &Context,
+    repo: &Repo,
+    args: &[String],
+    mut result: Arguments,
+) -> Result<Arguments> {
+    let mut after_separator = false;
+    for arg in args {
+        if !after_separator && arg == "--" {
+            after_separator = true;
+            result.args.push(arg.clone());
+        } else if !after_separator && arg.starts_with('-') {
+            match arg.as_str() {
+                "-d" | "--delete" | "-q" | "--quiet" => {}
+                "-D" | "-f" | "--force" => result.reset = true,
+                _ => return Err(format!(
+                    "Cannot safely coordinate branch deletion with {arg}; use --repo for native Git semantics"
+                ).into()),
+            }
+            result.args.push(arg.clone());
+        } else {
+            // Git's previous-checkout shorthand is stateful, not a literal branch
+            // name. Do not prepend a peer prefix or silently guess its meaning.
+            if arg.contains("@{") || arg == "-" {
+                return Err(
+                    "Use literal branch names for coordinated deletion, or select --repo".into(),
+                );
+            }
+            let name = mapped(ctx, repo, arg, true)?;
+            output(&repo.path, &["check-ref-format", "--branch", &name])?;
+            if result.deletion.contains(&name) {
+                return Err(
+                    format!("Branch {name} was requested for deletion more than once").into(),
+                );
+            }
+            result.deletion.push(name.clone());
+            result.args.push(name);
+        }
+    }
+    if result.deletion.is_empty() {
+        return Err("Branch deletion requires at least one branch name".into());
+    }
+    Ok(result)
+}
+
+fn deletion_available(repo: &Path, name: &str, force: bool) -> Result<()> {
+    let reference = format!("refs/heads/{name}");
+    if !exists(repo, &reference) {
+        return Err(format!("{} is missing branch {name}", repo.display()).into());
+    }
+    // Unlike branch creation, deletion must also reject the current worktree.
+    let listing = output(repo, &["worktree", "list", "--porcelain", "-z"])?;
+    if listing
+        .split('\0')
+        .any(|field| field == format!("branch {reference}"))
+    {
+        return Err(format!(
+            "Branch {name} in {} is checked out in a worktree",
+            repo.display()
+        )
+        .into());
+    }
+    if !force {
+        // Native `branch -d` checks its resolvable upstream, falling back to HEAD.
+        // Checking only HEAD would either reject valid deletion or lose branches
+        // not yet integrated into their configured upstream.
+        let upstream = output(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{name}@{{upstream}}"),
+            ],
+        );
+        let destination = upstream.unwrap_or_else(|_| "HEAD".to_string());
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["merge-base", "--is-ancestor", &reference, &destination])
+            .output()?;
+        match status.status.code() {
+            Some(0) => {}
+            Some(1) => return Err(format!("Branch {name} in {} is not fully merged into its upstream or HEAD; use -D only to intentionally discard it", repo.display()).into()),
+            _ => return Err(format!("Cannot verify deletion of {name}: {}", String::from_utf8_lossy(&status.stderr).trim()).into()),
+        }
+    }
+    Ok(())
+}
+
+pub fn execute_os(ctx: &Context, command: &str, args: &[OsString], dry: bool) -> Result<i32> {
+    let mut after_separator = false;
+    let mut parsed = Vec::with_capacity(args.len());
+    for arg in args {
+        if let Some(value) = arg.to_str() {
+            after_separator |= value == "--";
+            parsed.push(value.to_owned());
+        } else if !ctx.mapping
+            && after_separator
+            && matches!(command, "checkout" | "diff" | "status")
+        {
+            // Only path operands after an explicit boundary are opaque. The
+            // planner does not inspect them, and execution uses original bytes.
+            parsed.push("<non-UTF-8 path>".to_owned());
+        } else {
+            return Err("Cannot safely interpret non-UTF-8 Git arguments here; use native Git, or put paths after -- in single-repository mode".into());
+        }
+    }
+    execute_inner(ctx, command, &parsed, dry, (!ctx.mapping).then_some(args))
+}
+
+fn execute_inner(
+    ctx: &Context,
+    command: &str,
+    args: &[String],
+    dry: bool,
+    native_args: Option<&[OsString]>,
+) -> Result<i32> {
     if !matches!(
         command,
         "status" | "branch" | "switch" | "checkout" | "diff"
@@ -438,6 +638,9 @@ pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Resu
         .map(|repo| arguments(ctx, repo, command, args))
         .collect::<Result<Vec<_>>>()?;
     for (repo, plan) in ctx.repos.iter().zip(&plans) {
+        for branch in &plan.deletion {
+            deletion_available(&repo.path, branch, plan.reset)?;
+        }
         if plan.moving {
             clean(&repo.path)?;
         }
@@ -448,6 +651,7 @@ pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Resu
             && let Some(target) = &plan.target
         {
             if plan.moving
+                && !plan.detached
                 && plan.new.is_none()
                 && !args.iter().any(|a| a == "--ignore-other-worktrees")
                 && exists(
@@ -481,19 +685,28 @@ pub fn execute(ctx: &Context, command: &str, args: &[String], dry: bool) -> Resu
     for (i, (repo, plan)) in ctx.repos.iter().zip(&plans).enumerate() {
         eprintln!("== {} ==", repo.path.display());
         if dry {
-            eprintln!("git {command} {:?}", plan.args);
+            if let Some(args) = native_args {
+                eprintln!("git {command} {args:?}");
+            } else {
+                eprintln!("git {command} {:?}", plan.args);
+            }
             continue;
         }
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(&repo.path)
-            .arg(command)
-            .args(&plan.args)
-            .status()?;
+        let mut process = Command::new("git");
+        process.arg("-C").arg(&repo.path).arg(command);
+        if let Some(args) = native_args {
+            process.args(args);
+        } else {
+            process.args(&plan.args);
+        }
+        let status = process.status()?;
         let current = status.code().unwrap_or(1);
         let diff_found = command == "diff"
             && current == 1
-            && args.iter().any(|a| a == "--exit-code" || a == "--quiet");
+            && args
+                .iter()
+                .take_while(|a| a.as_str() != "--")
+                .any(|a| a == "--exit-code" || a == "--quiet");
         if current != 0 && !diff_found {
             eprintln!(
                 "Completed: {}; failed: {}; not executed: {}. No automatic rollback; check git status in each repository before recovering.",

@@ -5,8 +5,15 @@ mod doctor;
 mod git;
 mod worktree;
 
-use clap::Parser;
-use std::path::PathBuf;
+use clap::{Parser, Subcommand};
+use std::{ffi::OsString, path::PathBuf};
+const GIT_COMMANDS: &[(&str, &str)] = &[
+    ("status", "Show working tree status"),
+    ("branch", "List, create, or delete branches"),
+    ("switch", "Switch branches"),
+    ("checkout", "Switch branches or restore files"),
+    ("diff", "Show changes"),
+];
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Parser, Debug)]
@@ -15,8 +22,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
     version,
     about = "Manage Git work environments, linked repositories, and local configuration",
     arg_required_else_help = true,
-    after_help = "Commands:\n  config       Show the configuration guide\n  status       Show working tree status\n  branch       List, create, or delete branches\n  switch       Switch branches\n  checkout     Switch branches or restore files\n  diff         Show changes\n  worktree     Add, list, or remove work environments\n  doctor       Check configuration and environment health\n  completions  Print or install shell completions\n  uninstall    Uninstall the current executable\n\nPlace Loom options before COMMAND. Arguments after COMMAND are passed to that command.",
-    trailing_var_arg = true
+    after_help = "Native Git commands: status, branch, switch, checkout, diff.\nPlace Loom options before COMMAND. Native Git arguments, including --, are passed after COMMAND."
 )]
 struct Cli {
     /// Read configuration from this file
@@ -28,70 +34,136 @@ struct Cli {
     /// Preview supported operations without making changes
     #[arg(long)]
     dry_run: bool,
-    /// Command to execute (see below)
-    command: String,
-    /// Arguments for the selected command
-    #[arg(allow_hyphen_values = true)]
-    args: Vec<String>,
+    #[command(subcommand)]
+    command: Commands,
 }
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Show the configuration guide
+    Config,
+    /// Add, list, or remove work environments
+    Worktree {
+        #[command(subcommand)]
+        command: WorktreeCommand,
+    },
+    /// Check configuration and environment health
+    Doctor {
+        /// Print a versioned machine-readable report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print or install shell completions
+    Completions {
+        #[command(subcommand)]
+        command: CompletionCommand,
+    },
+    /// Remove the current executable; keep repository data and shell configuration
+    Uninstall,
+    #[command(name = "__complete", hide = true)]
+    Complete { kind: String },
+    #[command(external_subcommand)]
+    Git(Vec<OsString>),
+}
+
+#[derive(Subcommand, Debug)]
+enum WorktreeCommand {
+    /// Create a work environment and copy its local configuration
+    Add {
+        directory: PathBuf,
+        /// Create a new branch
+        #[arg(short = 'b')]
+        branch: Option<String>,
+        start_point: Option<String>,
+        /// Detach HEAD instead of checking out a branch
+        #[arg(long, conflicts_with = "branch")]
+        detach: bool,
+    },
+    /// List Loom environments and native Git worktrees
+    List,
+    /// Remove an environment, retaining its branches
+    Remove {
+        directory: PathBuf,
+        /// Discard local changes in the selected environment
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CompletionCommand {
+    /// Generate Zsh completions with dynamic repository and reference candidates
+    Zsh {
+        /// Install the completion file rather than printing it
+        #[arg(long)]
+        install: bool,
+        /// Override the completion directory
+        #[arg(long, requires = "install")]
+        dir: Option<PathBuf>,
+    },
+}
+
 fn run(cli: Cli) -> Result<i32> {
-    if cli.command == "uninstall" {
-        if cli.args == ["--help"] || cli.args == ["-h"] {
-            println!(
-                "Usage: git loom [--dry-run] uninstall\n\nRemove the current executable. Repository data and shell configuration are kept."
-            );
-            return Ok(0);
+    match cli.command {
+        Commands::Config => config::guide(&[]),
+        Commands::Completions {
+            command: CompletionCommand::Zsh { install, dir },
+        } => completions::run(install, dir, cli.dry_run),
+        Commands::Doctor { json } => doctor::run(cli.config.as_deref(), json),
+        Commands::Complete { kind } => {
+            if let Ok(ctx) = config::Context::load(cli.config.as_deref(), cli.repo.as_deref()) {
+                let _ = completions::candidates(&ctx, &[kind]);
+            }
+            Ok(0)
         }
-        if !cli.args.is_empty() {
-            return Err("Usage: git loom [--dry-run] uninstall".into());
+        Commands::Uninstall => {
+            let executable = std::env::current_exe()?;
+            if cli.dry_run {
+                println!("Would remove {}", executable.display());
+            } else {
+                std::fs::remove_file(&executable)?;
+                println!("Uninstalled {}", executable.display());
+            }
+            Ok(0)
         }
-        let executable = std::env::current_exe()?;
-        if cli.dry_run {
-            println!("Would remove {}", executable.display());
-        } else {
-            std::fs::remove_file(&executable)?;
-            println!("Uninstalled {}", executable.display());
+        Commands::Worktree { command } => {
+            let ctx = config::Context::load(cli.config.as_deref(), cli.repo.as_deref())?;
+            match command {
+                WorktreeCommand::Add {
+                    directory,
+                    branch,
+                    start_point,
+                    detach,
+                } => worktree::add(
+                    &ctx,
+                    &directory,
+                    branch.as_deref(),
+                    start_point.as_deref(),
+                    detach,
+                    cli.dry_run,
+                ),
+                WorktreeCommand::List => worktree::list(&ctx),
+                WorktreeCommand::Remove { directory, force } => {
+                    worktree::remove(&ctx, &directory, force, cli.dry_run)
+                }
+            }
         }
-        return Ok(0);
-    }
-    if cli.command == "config" {
-        return config::guide(&cli.args);
-    }
-    if cli.command == "completions" {
-        return completions::run(&cli.args, cli.dry_run);
-    }
-    if cli.command == "doctor" {
-        return doctor::run(cli.config.as_deref(), &cli.args);
-    }
-    if cli.command == "__complete" {
-        if let Ok(ctx) = config::Context::load(cli.config.as_deref(), cli.repo.as_deref()) {
-            let _ = completions::candidates(&ctx, &cli.args);
+        Commands::Git(args) => {
+            let command = args
+                .first()
+                .and_then(|arg| arg.to_str())
+                .ok_or("Missing Git command")?;
+            if !GIT_COMMANDS.iter().any(|(name, _)| *name == command) {
+                return Err(format!("Unknown command {command}; run git loom --help").into());
+            }
+            let ctx = config::Context::load(cli.config.as_deref(), cli.repo.as_deref())?;
+            git::execute_os(&ctx, command, &args[1..], cli.dry_run)
         }
-        return Ok(0);
-    }
-    let ctx = config::Context::load(cli.config.as_deref(), cli.repo.as_deref())?;
-    if cli.command == "worktree" {
-        worktree::run(&ctx, &cli.args, cli.dry_run)
-    } else {
-        git::execute(&ctx, &cli.command, &cli.args, cli.dry_run)
     }
 }
+
 fn main() {
-    let mut cli = Cli::parse();
-    // clap consumes `--`; preserve the original Git argument boundary verbatim.
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    let mut index = 0;
-    while index < raw.len() {
-        if raw[index] == "--config" || raw[index] == "--repo" {
-            index += 2;
-        } else if raw[index].starts_with('-') {
-            index += 1;
-        } else {
-            cli.args = raw[index + 1..].to_vec();
-            break;
-        }
-    }
-    let code = match run(cli) {
+    let code = match run(Cli::parse()) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("error: {error}");

@@ -23,7 +23,7 @@ git loom uninstall
 需要 Rust 1.90 或更新版本及系统 Git。
 
 ```sh
-cargo install --path .
+cargo install --locked --path .
 git loom --help
 git loom --version
 ```
@@ -73,7 +73,7 @@ git loom diff --cached
 git loom diff main...fix/example
 ```
 
-Loom 选项放在子命令前，后面保留原生 Git 参数：
+Loom 全局选项放在子命令前。Loom 自有命令支持逐级 `--help`（例如 `git loom worktree add --help`），拼错自有选项会报错。Git 子命令之后是 Git 参数，`--` 分隔符不会被 Loom 吞掉：
 
 ```sh
 git loom --repo . diff HEAD~1
@@ -85,11 +85,11 @@ git loom --dry-run switch fix/example
 
 分支、tag、远程分支及 `main~2`、`main...feature` 的引用部分自动映射。`HEAD`、`HEAD~1`、`-` 按各仓库自身状态解释。commit SHA 无法推导对应提交，多仓库下要求 `--repo`。路径用 `--` 分隔，相对于各自仓库根目录；有歧义的分支/tag 用完整 `refs/heads/…` 或 `refs/tags/…`。
 
-checkout 的文件恢复、patch、detach、orphan 等仍由 Git 执行。多仓库只改写能够明确识别的参数位置；未知选项组合提示指定 `--repo`，不猜测参数含义。单仓库将原始参数交给 Git。
+checkout 的文件恢复、patch、detach、orphan 等仍由 Git 执行。多仓库按子命令识别支持的参数，不猜测未知选项的含义；不支持的组合请用 `--repo` 或原生 Git。单仓库或指定 `--repo` 时使用原始 Git 参数，仍执行 Loom 的检出保护；如果文件名不是 UTF-8，路径可放在 `diff`、`checkout` 或 `status` 的 `--` 之后。
 
 **改变检出位置前，只要任一参与仓库有已暂存、未暂存、未跟踪文件或未完成的 Git 操作，全部拒绝。** Git 的强制切换参数也不会绕过此限制。忽略文件不阻止切换；文件恢复和 patch 模式允许存在改动。
 
-操作串行执行，全部可提前完成的检查在写入前进行。执行中失败停止后续操作，不自动 stash、回滚或删除已经创建的分支。查看输出及 `git loom status`，再决定恢复方式。
+操作串行执行。跨仓库删除分支时，先逐个确认分支存在、未被任何 worktree 检出，并在非强制删除时检查是否合入上游（没有可用上游时检查 HEAD）。跨仓库只接受本地分支的明确删除参数；远程跟踪分支请用 `--repo` 或原生 Git。预检查不能保证跨仓库原子性；执行中失败会停止后续操作，不自动 stash、回滚或删除已经创建的分支。查看输出及 `git loom status`，再决定恢复方式。
 
 Diff 的仓库标题输出到 stderr，Git 内容输出到 stdout。`--exit-code` / `--quiet` 发现差异返回 1，但继续检查其他仓库；真正错误才中止。多仓库输出保留每个仓库自身的路径，不应直接把合并输出当作单仓库补丁应用。
 
@@ -138,7 +138,7 @@ git loom worktree remove ../修复环境 --force
 
 登记环境按整组删除；如果 `--repo` 排除了环境中的成员，会在删除前拒绝操作。`--force` 只允许丢弃所选范围内的本地文件，不扩大仓库选择范围。
 
-不自动解锁，不删除分支，不删除主工作树。环境容器只有为空时才移除，额外文件保留。Git 公共目录下的 `loom/worktrees.json` 保存分组和进度，不保存配置内容。失败时保留实际完成记录，`doctor` 可检查状态偏差；原生 Git 操作导致的失效记录不会自动修复。
+不自动解锁，不删除分支，不删除主工作树。环境容器只有为空时才移除，额外文件保留。Git 公共目录下的 `loom/worktrees.json` 保存分组和进度，不保存配置内容。同一 Git 公共目录的 Loom 创建和删除操作互斥，已有写入操作时会拒绝并提示稍后重试；这不锁定原生 Git 命令。失败时保留实际完成记录，`doctor` 可检查状态偏差；原生 Git 操作导致的失效记录不会自动修复。
 
 ## Doctor
 
@@ -179,9 +179,10 @@ fpath=(~/.zsh/completions $fpath)
 
 ```sh
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo build --release
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --locked --release
+sh tests/install.sh
 ```
 
-集成测试创建独立临时 Git 仓库，覆盖联动拒绝、引用映射、原生 checkout、worktree 复制/删除、部分失败、doctor 和 Zsh。不会修改实际 Android 仓库。未执行远程发布、其他平台验收或业务工程构建。
+集成测试使用独立的临时 Git 仓库，覆盖联动拒绝、引用映射、原生 checkout、worktree 复制/删除、并发登记保护、CLI 帮助、doctor 和 Zsh。安装器测试验证正常安装、升级及校验失败时保留旧版本。PR 自动运行 CI；只有版本匹配的 tag 构建会进入发布，待上传的安装包在 Actions 中仅保留 1 天。
