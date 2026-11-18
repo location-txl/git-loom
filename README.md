@@ -186,3 +186,5 @@ sh tests/install.sh
 ```
 
 集成测试使用独立的临时 Git 仓库，覆盖联动拒绝、引用映射、原生 checkout、worktree 复制/删除、并发登记保护、CLI 帮助、doctor 和 Zsh。安装器测试验证正常安装、升级及校验失败时保留旧版本。`ci.yml` 在 Ubuntu 上为 main 和 PR 跑格式、lint、测试及安装脚本检查，不构建 Release、不生成发布包，也不上传产物。`release.yml` 只在推送 `v*` 标签时触发，检查标签与 Cargo 版本一致后，在 macOS ARM 上构建并打包，随后发布。交接用的安装包在 Actions 中仅保留 1 天。
+
+Ubuntu CI 复用 Linux 编译缓存。main 还按 `Cargo.lock` 缓存可跨平台复用的 Cargo 下载，在发版时供 macOS 还原；不跨平台缓存编译产物。macOS 发版的测试与打包使用同一 Release profile 和目标，复用同一次运行的编译结果。按 GitHub 的缓存隔离规则，macOS 编译缓存只加速同一标签重跑，不会跨标签命中。

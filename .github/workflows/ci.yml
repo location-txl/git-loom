@@ -28,7 +28,15 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
-      - name: Cache Rust build
+      - name: Restore shared Cargo downloads
+        id: cargo-downloads
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cargo/registry/cache
+          key: cargo-crate-archives-v1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-crate-archives-v1-
+          enableCrossOsArchive: true
+      - name: Cache Linux Rust build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           env-vars: 'CARGO CC CFLAGS CXX CMAKE RUST'
@@ -50,3 +58,13 @@ jobs:
           sh -n install.sh
           sh -n tests/install.sh
           sh tests/install.sh
+      - name: Warm Cargo downloads for Apple Silicon releases
+        if: github.ref == 'refs/heads/main' && steps.cargo-downloads.outputs.cache-hit != 'true'
+        run: cargo +1.90.0 fetch --locked --target aarch64-apple-darwin
+      - name: Save shared Cargo downloads
+        if: github.ref == 'refs/heads/main' && steps.cargo-downloads.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ~/.cargo/registry/cache
+          key: cargo-crate-archives-v1-${{ hashFiles('Cargo.lock') }}
+          enableCrossOsArchive: true
