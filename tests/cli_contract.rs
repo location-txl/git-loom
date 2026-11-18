@@ -100,8 +100,9 @@ fn generated_completion_has_no_template_tokens_and_covers_own_commands() {
     assert!(script.contains("config:") && script.contains("switch:"));
 }
 
+// The macOS runner filesystem rejects this deliberately invalid UTF-8 filename.
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn non_utf8_native_path_is_forwarded_without_loss() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
     let root = tempfile::tempdir().unwrap();
