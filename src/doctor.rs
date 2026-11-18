@@ -24,10 +24,7 @@ fn check(
         suggestion: suggestion.into(),
     }
 }
-pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
-    if args.iter().any(|a| a != "--json") {
-        return Err("doctor only supports --json".into());
-    }
+pub fn run(path: Option<&Path>, json: bool) -> Result<i32> {
     let mut checks = Vec::new();
     match git::output(&std::env::current_dir()?, &["--version"]) {
         Ok(version) => checks.push(check("git", "OK", None, version, "")),
@@ -192,7 +189,7 @@ pub fn run(path: Option<&Path>, args: &[String]) -> Result<i32> {
         checks.push(check("zsh-completions", if installed && configured { "OK" } else { "WARN" }, None, format!("completion file in default directory={installed}; known .zshrc fpath configuration={configured} (static check; does not confirm the current shell has loaded it)"), "Run git loom completions zsh --install; in the current shell, run eval \"$(git loom completions zsh)\""));
     }
     let code = i32::from(checks.iter().any(|c| c.level == "ERROR"));
-    if args.iter().any(|a| a == "--json") {
+    if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({"version": 1, "checks": checks}))?

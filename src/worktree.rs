@@ -1,6 +1,7 @@
 use crate::{Result, config::Context, copy, git};
 use serde::{Deserialize, Serialize};
 use std::{
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -20,6 +21,27 @@ pub struct Group {
 }
 fn registry(ctx: &Context) -> Result<PathBuf> {
     Ok(git::common(&ctx.root)?.join("loom/worktrees.json"))
+}
+// Keep the lock on a stable inode: the JSON itself is atomically replaced.
+fn lock_registry(ctx: &Context, dry: bool) -> Result<Option<fs::File>> {
+    if dry {
+        return Ok(None);
+    }
+    let path = registry(ctx)?.with_file_name("worktrees.lock");
+    fs::create_dir_all(path.parent().ok_or("Invalid worktree registry path")?)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    match lock.try_lock() {
+        Ok(()) => Ok(Some(lock)),
+        Err(fs::TryLockError::WouldBlock) => Err(
+            "Another git loom worktree operation is active for this repository; retry after it finishes".into(),
+        ),
+        Err(fs::TryLockError::Error(error)) => Err(error.into()),
+    }
 }
 pub fn groups(ctx: &Context) -> Result<Vec<Group>> {
     let path = registry(ctx)?;
@@ -60,7 +82,7 @@ pub fn trees(repo: &Path) -> Result<Vec<Tree>> {
     }
     Ok(trees)
 }
-fn absolute(path: &str) -> Result<PathBuf> {
+fn absolute(path: &Path) -> Result<PathBuf> {
     let raw = std::env::current_dir()?.join(path);
     let mut result = PathBuf::new();
     for component in raw.components() {
@@ -86,57 +108,34 @@ fn absolute(path: &str) -> Result<PathBuf> {
             .join(result.strip_prefix(ancestor)?))
     }
 }
-pub fn run(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
-    match args.first().map(String::as_str) {
-        Some("add") => add(ctx, &args[1..], dry),
-        Some("remove") => remove(ctx, &args[1..], dry),
-        Some("list") => {
-            for group in groups(ctx)? {
-                println!("Environment: {}", group.target.display());
-                for member in group.members {
-                    println!(
-                        "  {} [created={} configured={}]",
-                        member.target.display(),
-                        member.created,
-                        member.copied
-                    );
-                }
-            }
-            for repo in &ctx.repos {
-                println!("Repository: {} (registered with Git)", repo.path.display());
-                println!("{}", git::output(&repo.path, &["worktree", "list"])?);
-            }
-            Ok(0)
+pub(crate) fn list(ctx: &Context) -> Result<i32> {
+    for group in groups(ctx)? {
+        println!("Environment: {}", group.target.display());
+        for member in group.members {
+            println!(
+                "  {} [created={} configured={}]",
+                member.target.display(),
+                member.created,
+                member.copied
+            );
         }
-        _ => Err(
-            "Usage: git loom worktree add <DIRECTORY> [-b BRANCH] [START-POINT] | list | remove <DIRECTORY> [--force]"
-                .into(),
-        ),
     }
+    for repo in &ctx.repos {
+        println!("Repository: {} (registered with Git)", repo.path.display());
+        println!("{}", git::output(&repo.path, &["worktree", "list"])?);
+    }
+    Ok(0)
 }
-fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
-    let mut path = None;
-    let mut branch = None;
-    let mut start = None;
-    let mut options = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-b" => {
-                i += 1;
-                branch = Some(args.get(i).ok_or("-b requires a branch")?.clone());
-            }
-            "--detach" => options.push("--detach".to_string()),
-            a if a.starts_with('-') => {
-                return Err(format!("Unsupported worktree add argument {a}").into());
-            }
-            a if path.is_none() => path = Some(a.to_string()),
-            a if start.is_none() => start = Some(a.to_string()),
-            _ => return Err("Unexpected worktree argument".into()),
-        }
-        i += 1;
-    }
-    let target = absolute(&path.ok_or("Missing target directory")?)?;
+pub(crate) fn add(
+    ctx: &Context,
+    path: &Path,
+    branch: Option<&str>,
+    start: Option<&str>,
+    detach: bool,
+    dry: bool,
+) -> Result<i32> {
+    let _registry_lock = lock_registry(ctx, dry)?;
+    let target = absolute(path)?;
     if target.exists() {
         return Err("Target directory already exists; use a new environment directory".into());
     }
@@ -170,19 +169,20 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         if destination.exists() {
             return Err(format!("Target already exists: {}", destination.display()).into());
         }
-        let mut command = vec!["worktree".into(), "add".into()];
-        command.extend(options.clone());
+        let mut command: Vec<OsString> = vec!["worktree".into(), "add".into()];
+        if detach {
+            command.push("--detach".into());
+        }
         let new = branch
-            .as_deref()
             .map(|b| git::mapped(ctx, repo, b, true))
             .transpose()?;
         if let Some(new) = &new {
             git::branch_available(&repo.path, new, true)?;
-            command.extend(["-b".into(), new.clone()]);
+            command.extend(["-b".into(), new.into()]);
         }
-        let reference = match start.as_deref() {
+        let reference = match start {
             Some(r) => git::mapped(ctx, repo, r, false)?,
-            None if new.is_some() || !options.is_empty() => "HEAD".into(),
+            None if new.is_some() || detach => "HEAD".into(),
             None => {
                 return Err("Specify an existing branch or use -b to create a new branch".into());
             }
@@ -190,7 +190,7 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
         if !git::exists(&repo.path, &reference) {
             return Err(format!("{} is missing reference {reference}", repo.path.display()).into());
         }
-        if new.is_none() && options.is_empty() {
+        if new.is_none() && !detach {
             git::branch_available(&repo.path, &reference, false)?;
             if trees(&repo.path)?.iter().any(|t| {
                 git::output(&t.path, &["symbolic-ref", "--short", "HEAD"])
@@ -205,8 +205,8 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
                 return Err(format!("Branch {reference} is already checked out").into());
             }
         }
-        command.push(destination.to_string_lossy().into_owned());
-        command.push(reference);
+        command.push(destination.as_os_str().to_owned());
+        command.push(reference.into());
         let matched = copy::scan(&repo.path, &repo.copy_files)?;
         for warning in matched.warnings {
             eprintln!("{}：{warning}", repo.name);
@@ -278,13 +278,9 @@ fn add(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
     println!("Development environment is ready: {}", target.display());
     Ok(0)
 }
-fn remove(ctx: &Context, args: &[String], dry: bool) -> Result<i32> {
-    let force = args.iter().any(|a| a == "--force");
-    let paths: Vec<_> = args.iter().filter(|a| a.as_str() != "--force").collect();
-    if paths.len() != 1 {
-        return Err("Usage: worktree remove <DIRECTORY> [--force]".into());
-    }
-    let target = absolute(paths[0])?;
+pub(crate) fn remove(ctx: &Context, path: &Path, force: bool, dry: bool) -> Result<i32> {
+    let _registry_lock = lock_registry(ctx, dry)?;
+    let target = absolute(path)?;
     let mut records = groups(ctx)?;
     let index = records.iter().position(|g| g.target == target);
     let members = if let Some(i) = index {
