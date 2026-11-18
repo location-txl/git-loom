@@ -185,4 +185,4 @@ cargo build --locked --release
 sh tests/install.sh
 ```
 
-集成测试使用独立的临时 Git 仓库，覆盖联动拒绝、引用映射、原生 checkout、worktree 复制/删除、并发登记保护、CLI 帮助、doctor 和 Zsh。安装器测试验证正常安装、升级及校验失败时保留旧版本。main 和 PR 的 CI 只做格式、lint、测试及安装脚本检查，不构建 Release、不生成发布包，也不上传产物。只有推送与 Cargo 版本匹配的 `v*` 标签时，才构建、打包和发布，交接用的安装包在 Actions 中仅保留 1 天。
+集成测试使用独立的临时 Git 仓库，覆盖联动拒绝、引用映射、原生 checkout、worktree 复制/删除、并发登记保护、CLI 帮助、doctor 和 Zsh。安装器测试验证正常安装、升级及校验失败时保留旧版本。`ci.yml` 在 Ubuntu 上为 main 和 PR 跑格式、lint、测试及安装脚本检查，不构建 Release、不生成发布包，也不上传产物。`release.yml` 只在推送 `v*` 标签时触发，检查标签与 Cargo 版本一致后，在 macOS ARM 上构建并打包，随后发布。交接用的安装包在 Actions 中仅保留 1 天。

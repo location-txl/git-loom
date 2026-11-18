@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'completions/**'
+      - 'docs/config.txt'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'install.sh'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: '1.90.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          env-vars: 'CARGO CC CFLAGS CXX CMAKE RUST'
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Ensure Zsh and ShellCheck are available
+        run: |
+          if ! command -v zsh >/dev/null || ! command -v shellcheck >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends zsh shellcheck
+          fi
+      - name: Check and test
+        run: |
+          cargo +1.90.0 fmt --check
+          cargo +1.90.0 clippy --locked --all-targets -- -D warnings
+          cargo +1.90.0 test --locked
+      - name: Check installer scripts
+        run: |
+          shellcheck install.sh tests/install.sh
+          sh -n install.sh
+          sh -n tests/install.sh
+          sh tests/install.sh

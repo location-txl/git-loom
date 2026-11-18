@@ -1,36 +1,13 @@
-name: CI and macOS ARM release
+name: macOS ARM release
 
 on:
-  pull_request:
   push:
-    branches: [main]
     tags: ['v*']
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'completions/**'
-      - 'docs/config.txt'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'install.sh'
-      - '.github/workflows/**'
 
 permissions:
   contents: read
 
 jobs:
-  shell:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Check installer scripts
-        run: |
-          shellcheck install.sh tests/install.sh
-          sh -n install.sh
-          sh -n tests/install.sh
-          sh tests/install.sh
   build:
     runs-on: macos-15
     env:
@@ -46,9 +23,8 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           env-vars: 'CARGO CC CFLAGS CXX CMAKE RUST MACOSX_DEPLOYMENT_TARGET'
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       - name: Validate release version
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -60,7 +36,6 @@ jobs:
           cargo +1.90.0 clippy --locked --all-targets -- -D warnings
           cargo +1.90.0 test --locked
       - name: Build and package release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: |
           cargo +1.90.0 build --locked --release --target aarch64-apple-darwin
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)
@@ -71,7 +46,6 @@ jobs:
           cd dist
           shasum -a 256 git-loom-aarch64-apple-darwin.tar.gz > git-loom-aarch64-apple-darwin.tar.gz.sha256
       - name: Transfer release assets
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets
@@ -79,8 +53,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   publish:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [shell, build]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
