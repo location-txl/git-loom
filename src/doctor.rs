@@ -92,7 +92,7 @@ pub fn run(path: Option<&Path>, json: bool) -> Result<i32> {
                     Ok(branch) => {
                         let expected = primary_branch
                             .as_ref()
-                            .map(|b| format!("{}{b}", repo.branch_prefix));
+                            .map(|b| git::mapped_branch(repo, b));
                         let mismatch = expected.as_ref().is_some_and(|b| b != &branch);
                         checks.push(check(
                             "branch",
