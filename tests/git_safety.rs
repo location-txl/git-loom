@@ -45,8 +45,10 @@ fn assert_ok(out: Output) {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let a = dir.path().join("a");
-        let b = dir.path().join("b");
+        // Match the canonical paths Loom reports, including macOS /private/var.
+        let root = dir.path().canonicalize().unwrap();
+        let a = root.join("a");
+        let b = root.join("b");
         for repo in [&a, &b] {
             fs::create_dir(repo).unwrap();
             git(repo, &["init", "-b", "main"]);
