@@ -523,6 +523,71 @@ fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
 }
 
 #[test]
+fn zsh_completes_attached_repo_values_and_direct_native_options() {
+    let f = Fixture::new();
+    let bin = env!("CARGO_BIN_EXE_git-loom");
+    let script = r#"
+      autoload -Uz compinit
+      compinit -D -i
+      eval "$("$1" completions zsh)"
+      _files() { return 0; }
+      compadd() { return 0; }
+      _describe() {
+        if [[ $1 == repositories ]]; then local -a choices=("${(@P)2}"); local choice; for choice in "$choices[@]"; do print -r -- "$IPREFIX|$choice"; done; fi
+        return 0
+      }
+      compset() {
+        [[ $1 == -P && $2 == --repo= && $PREFIX == --repo=* ]] || return 1
+        PREFIX=${PREFIX#--repo=}
+        IPREFIX=--repo=
+      }
+      _git() {
+        [[ $service == git && $CURRENT == 3 && $words[1] == git &&
+           $words[2] == switch && $words[3] == --detac ]] || return 1
+        print -r -- native:--detach
+      }
+
+      words=(git loom '--repo=../pl')
+      CURRENT=3
+      PREFIX=--repo=../pl
+      IPREFIX=''
+      service=git
+      _git-loom
+
+      words=(git-loom switch --detac)
+      CURRENT=3
+      PREFIX=--detac
+      IPREFIX=''
+      service=git-loom
+      _git-loom
+    "#;
+    let out = Command::new("zsh")
+        .args(["-f", "-c", script, "zsh", bin])
+        .current_dir(&f.a)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                Path::new(bin).parent().unwrap().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let output = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        output.lines().any(|l| l == "--repo=|../platform"),
+        "{output}"
+    );
+    assert!(output.lines().any(|l| l == "native:--detach"), "{output}");
+}
+
+#[test]
 #[cfg(unix)]
 fn failed_post_checkout_records_created_worktree_and_can_remove() {
     use std::os::unix::fs::PermissionsExt;

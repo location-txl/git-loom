@@ -30,7 +30,10 @@ _git-loom() {
       *) sub=${loom_words[i]}; break;;
     esac
   done
-  if [[ ${loom_words[loom_current-1]} == --repo ]]; then
+  if [[ -z $sub ]] && {
+    [[ ${loom_words[loom_current-1]} == --repo ]] ||
+      { [[ ${loom_words[loom_current]} == --repo=* ]] && compset -P '--repo='; }
+  }; then
     candidates=("${(@f)$(git-loom "${global_args[@]}" __complete repos 2>/dev/null)}")
     _describe 'repositories' candidates; return
   fi
@@ -60,7 +63,7 @@ _git-loom() {
   # Use system Git completion for native options; the candidates above provide Loom references.
   if [[ ${loom_words[loom_current]} == -* && $sub != worktree ]]; then
     local -a words=(git "${loom_words[@]:$((i-1))}")
-    local CURRENT=$((loom_current-i+2))
+    local CURRENT=$((loom_current-i+2)) service=git
     _git
   fi
 }
