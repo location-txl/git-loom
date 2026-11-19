@@ -94,13 +94,15 @@ pub fn run(install: bool, directory: Option<PathBuf>, dry: bool) -> Result<i32> 
     fs::write(&target, script)?;
     println!("Installed: {}", target.display());
     println!("Current shell: eval \"$(git loom completions zsh)\"");
-    println!(
-        "To load persistently, add this directory to fpath before compinit / Oh My Zsh initialization, then open a new terminal."
-    );
+    println!("In .zshrc, add this directory to fpath before compinit / Oh My Zsh initialization:");
     println!(
         "fpath=({} $fpath)",
         shell_quote(&directory.to_string_lossy())
     );
+    println!("After the last compinit (after sourcing Oh My Zsh and any plugins):");
+    println!("autoload -Uz _git-loom");
+    println!("compdef _git-loom git-loom");
+    println!("Open a new terminal and press Tab after 'git-loom doc' to verify.");
     Ok(0)
 }
 fn shell_quote(value: &str) -> String {

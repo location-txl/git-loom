@@ -523,6 +523,65 @@ fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
 }
 
 #[test]
+fn zsh_install_registration_works_with_a_stale_compinit_dump() {
+    let f = Fixture::new();
+    let directory = f.root.join("completion dir");
+    let install = ok(
+        &f.a,
+        &[
+            "completions",
+            "zsh",
+            "--install",
+            "--dir",
+            directory.to_str().unwrap(),
+        ],
+    );
+    let instructions = String::from_utf8(install.stdout).unwrap();
+    let setup = instructions
+        .lines()
+        .find(|line| line.starts_with("fpath=("))
+        .unwrap();
+    let register = instructions
+        .lines()
+        .skip_while(|line| !line.starts_with("autoload "))
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let script = r#"
+      autoload -Uz compinit
+      compinit -i -d "$1"
+      print -r -- "${_comps[git-loom]:-missing}" > "$2"
+      eval "$3"
+      compinit -C -d "$1"
+      print -r -- "${_comps[git-loom]:-missing}" >> "$2"
+      eval "$4"
+      print -r -- "${_comps[git-loom]:-missing}"
+      words=(git-loom doctor '')
+      CURRENT=3
+      compadd() { print -l -- "$@"; }
+      "${_comps[git-loom]}"
+    "#;
+    let before = f.root.join("before");
+    let out = Command::new("zsh")
+        .args(["-f", "-c", script, "zsh"])
+        .arg(f.root.join(".zcompdump"))
+        .arg(&before)
+        .arg(setup)
+        .arg(register)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read_to_string(before).unwrap(), "missing\nmissing\n");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().next(), Some("_git-loom"), "{stdout}");
+    assert!(stdout.contains("--json"), "{stdout}");
+}
+
+#[test]
 fn zsh_completes_attached_repo_values_and_direct_native_options() {
     let f = Fixture::new();
     let bin = env!("CARGO_BIN_EXE_git-loom");
