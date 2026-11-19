@@ -14,7 +14,17 @@ export MOCK_OS=Darwin MOCK_ARCH=arm64 MOCK_TRANSLATED=0 MOCK_CURL_FAIL=0
 if [ "$#" -gt 0 ]; then
     cp "$1" "$work/payload/git-loom"
 else
-    printf '#!/bin/sh\nprintf "git-loom 0.2.0\\n"\n' > "$work/payload/git-loom"
+    cat > "$work/payload/git-loom" <<'MOCK'
+#!/bin/sh
+case "$*" in
+    --version) echo 'git-loom 0.2.0' ;;
+    'completions zsh --status') echo "${MOCK_COMPLETION_STATUS:-missing}" ;;
+    'completions zsh --install')
+        echo called > "$HOME/completion-called"
+        exit "${MOCK_COMPLETION_EXIT:-0}" ;;
+    *) exit 2 ;;
+esac
+MOCK
 fi
 chmod +x "$work/payload/git-loom"
 cat > "$work/mocks/uname" <<'MOCK'
@@ -100,4 +110,62 @@ mkdir -p "$GIT_LOOM_INSTALL_DIR/git-loom"
 printf 'keep\n' > "$GIT_LOOM_INSTALL_DIR/git-loom/sentinel"
 expect_failure
 [ "$(cat "$GIT_LOOM_INSTALL_DIR/git-loom/sentinel")" = keep ]
+if [ "$#" -eq 0 ]; then
+    export GIT_LOOM_INSTALL_DIR="$work/interactive" SHELL=/bin/zsh
+    unset CI
+    python3 - "$root/install.sh" <<'PYTEST'
+import errno
+import os
+import pathlib
+import pty
+import select
+import signal
+import sys
+import time
+
+called = pathlib.Path(os.environ["HOME"], "completion-called")
+
+def install(status, answer, *, ci="", completion_exit="0"):
+    called.unlink(missing_ok=True)
+    pid, fd = pty.fork()
+    if pid == 0:
+        env = dict(os.environ, MOCK_COMPLETION_STATUS=status, CI=ci,
+                   MOCK_COMPLETION_EXIT=completion_exit)
+        os.execve("/bin/sh", ["sh", "-c", 'cat "$1" | sh', "sh", sys.argv[1]], env)
+    output = b""
+    sent = False
+    deadline = time.monotonic() + 8
+    try:
+        while select.select([fd], [], [], max(0, deadline - time.monotonic()))[0]:
+            try:
+                data = os.read(fd, 4096)
+            except OSError as e:
+                if e.errno == errno.EIO:
+                    break  # macOS/Linux may signal a closed PTY this way.
+                raise
+            if not data:
+                break
+            output += data
+            if not sent and b"[y/N]" in output:
+                os.write(fd, answer or b"n\n")
+                sent = True
+        else:
+            os.kill(pid, signal.SIGKILL)
+            raise AssertionError(output)
+    finally:
+        os.close(fd)
+        _, exit_status = os.waitpid(pid, 0)
+    assert exit_status == 0, output
+    assert sent == (answer is not None), output
+    assert called.exists() == (answer == b"y\n"), output
+    return output
+
+install("missing", b"y\n")
+install("missing", b"\n")  # The default does not touch startup files.
+install("configured", None)
+install("unverified", None)
+install("missing", None, ci="true")
+assert "补全安装失败".encode() in install("missing", b"y\n", completion_exit="1")
+PYTEST
+fi
 echo 'Installer smoke tests passed'

@@ -53,7 +53,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Print or install shell completions
+    /// Print, install, or check shell completions
     Completions {
         #[command(subcommand)]
         command: CompletionCommand,
@@ -94,9 +94,12 @@ enum WorktreeCommand {
 enum CompletionCommand {
     /// Generate Zsh completions with dynamic repository and reference candidates
     Zsh {
-        /// Install the completion file rather than printing it
+        /// Install completions and configure new interactive Zsh sessions
         #[arg(long)]
         install: bool,
+        /// Check persistent completion configuration without modifying it
+        #[arg(long, conflicts_with = "install")]
+        status: bool,
         /// Override the completion directory
         #[arg(long, requires = "install")]
         dir: Option<PathBuf>,
@@ -107,8 +110,13 @@ fn run(cli: Cli) -> Result<i32> {
     match cli.command {
         Commands::Config => config::guide(&[]),
         Commands::Completions {
-            command: CompletionCommand::Zsh { install, dir },
-        } => completions::run(install, dir, cli.dry_run),
+            command:
+                CompletionCommand::Zsh {
+                    install,
+                    dir,
+                    status,
+                },
+        } => completions::run(install, dir, status, cli.dry_run),
         Commands::Doctor { json } => doctor::run(cli.config.as_deref(), json),
         Commands::Complete { kind } => {
             if let Ok(ctx) = config::Context::load(cli.config.as_deref(), cli.repo.as_deref()) {
