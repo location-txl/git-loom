@@ -55,12 +55,20 @@ pub fn clean(repo: &Path) -> Result<()> {
     }
     Ok(())
 }
+pub(crate) fn mapped_branch(repo: &Repo, name: &str) -> String {
+    if matches!(name, "main" | "master") {
+        name.to_owned()
+    } else {
+        format!("{}{name}", repo.branch_prefix)
+    }
+}
+
 pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Result<String> {
     if !ctx.mapping {
         return Ok(value.to_string());
     }
     if new_branch {
-        return Ok(format!("{}{value}", repo.branch_prefix));
+        return Ok(mapped_branch(repo, value));
     }
     for separator in ["...", ".."] {
         if let Some((a, b)) = value.split_once(separator) {
@@ -85,7 +93,7 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
         return Err("Cannot map commit SHAs across repositories; use --repo".into());
     }
     if let Some(name) = base.strip_prefix("refs/heads/") {
-        return Ok(format!("refs/heads/{}{name}{suffix}", repo.branch_prefix));
+        return Ok(format!("refs/heads/{}{suffix}", mapped_branch(repo, name)));
     }
     if let Some(name) = base.strip_prefix("refs/tags/") {
         return Ok(format!("refs/tags/{}{name}{suffix}", repo.tag_prefix));
@@ -99,7 +107,7 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
         .into());
     }
     if branch {
-        return Ok(format!("{}{base}{suffix}", repo.branch_prefix));
+        return Ok(format!("{}{suffix}", mapped_branch(repo, base)));
     }
     if tag {
         return Ok(format!("{}{base}{suffix}", repo.tag_prefix));
@@ -115,8 +123,8 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
             ""
         };
         return Ok(format!(
-            "{full}{remote}/{}{name}{suffix}",
-            repo.branch_prefix
+            "{full}{remote}/{}{suffix}",
+            mapped_branch(repo, name)
         ));
     }
     // Preserve native checkout/switch remote branch inference.
@@ -130,7 +138,7 @@ pub fn mapped(ctx: &Context, repo: &Repo, value: &str, new_branch: bool) -> Resu
             .and_then(|r| r.split_once('/'))
             .is_some_and(|(_, n)| n == base)
     }) {
-        return Ok(format!("{}{base}{suffix}", repo.branch_prefix));
+        return Ok(format!("{}{suffix}", mapped_branch(repo, base)));
     }
     if exists(&ctx.root, base) {
         return Err(format!("Cannot map reference {base} across repositories; use --repo").into());

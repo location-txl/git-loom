@@ -46,7 +46,9 @@ Usage: git loom config
 
    peers[].branchPrefix / peers[].tagPrefix
      Prefixes added to branch and tag names in that peer; both default to "".
-     With "tob/", branch main maps to tob/main and tag v1.0 maps to tob/v1.0.
+     Exact branch names main and master are never prefixed. With "tob/",
+     feature/example maps to tob/feature/example, and tag v1.0 to tob/v1.0.
+     Existing prefixed branches such as tob/main are not renamed automatically.
      Selecting --repo uses that repository's actual names without adding prefixes.
 
    Use strict JSON: no comments or trailing commas. Unknown fields are rejected.

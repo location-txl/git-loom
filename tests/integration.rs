@@ -119,7 +119,6 @@ impl Fixture {
         let b = root.join("platform");
         init(&a);
         init(&b);
-        git(&b, &["branch", "-m", "tob/main"]);
         fs::write(a.join(".git-loom.json"), r#"{"copyFiles":["local.properties",".env",".env.*"],"peers":[{"path":"../platform","branchPrefix":"tob/","tagPrefix":"tob/","copyFiles":[".env"]}]}"#).unwrap();
         git(&a, &["add", ".git-loom.json"]);
         git(&a, &["commit", "-m", "config"]);
@@ -381,11 +380,10 @@ fn three_repositories_and_linked_peer_source() {
     git(&original, &["branch", "-m", "other"]);
     git(
         &original,
-        &["worktree", "add", "-b", "tob/main", f.b.to_str().unwrap()],
+        &["worktree", "add", "-b", "main", f.b.to_str().unwrap()],
     );
     let c = f.root.join("third");
     init(&c);
-    git(&c, &["branch", "-m", "third/main"]);
     fs::write(f.a.join(".git-loom.json"), r#"{"peers":[{"path":"../platform","branchPrefix":"tob/"},{"path":"../third","branchPrefix":"third/"}]}"#).unwrap();
     git(&f.a, &["add", ".git-loom.json"]);
     git(&f.a, &["commit", "-m", "third"]);
@@ -467,6 +465,7 @@ fn checkout_patch_runs_with_dirty_worktree() {
 #[test]
 fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
     let f = Fixture::new();
+    git(&f.b, &["branch", "tob/topic"]);
     let bin = Path::new(env!("CARGO_BIN_EXE_git-loom")).parent().unwrap();
     let script = r#"
       autoload -Uz compinit
@@ -501,7 +500,7 @@ fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
     );
     let output = String::from_utf8_lossy(&out.stdout);
     assert!(output.lines().any(|l| l == "main"), "{output}");
-    assert!(output.lines().any(|l| l == "tob/main"), "{output}");
+    assert!(output.lines().any(|l| l == "tob/topic"), "{output}");
     assert!(output.contains("--json"), "{output}");
     let directory = f.root.join("zsh");
     ok(
@@ -556,6 +555,76 @@ fn failed_post_checkout_records_created_worktree_and_can_remove() {
     );
     assert!(!f.target().exists());
 }
+#[test]
+fn primary_branches_are_literal_across_repositories() {
+    let f = Fixture::new();
+    ok(&f.a, &["branch", "master"]);
+    ok(&f.a, &["switch", "master"]);
+    assert_eq!(git(&f.b, &["branch", "--show-current"]), "master");
+
+    let out = ok(&f.a, &["doctor", "--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let peer = f.b.to_str().unwrap();
+    assert!(
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "branch" && c["repo"] == peer && c["level"] == "OK")
+    );
+
+    ok(&f.a, &["switch", "main"]);
+    assert_eq!(git(&f.b, &["branch", "--show-current"]), "main");
+    ok(&f.a, &["branch", "-d", "master"]);
+    assert!(git(&f.b, &["branch", "--list", "master", "tob/master"]).is_empty());
+    ok(&f.a, &["branch", "fix/main"]);
+    assert!(!git(&f.b, &["branch", "--list", "tob/fix/main"]).is_empty());
+
+    let target = f.target();
+    ok(
+        &f.a,
+        &[
+            "worktree",
+            "add",
+            target.to_str().unwrap(),
+            "-b",
+            "master",
+            "main",
+        ],
+    );
+    assert_eq!(
+        git(&target.join("platform"), &["branch", "--show-current"]),
+        "master"
+    );
+}
+
+#[test]
+fn primary_branch_refs_preserve_qualifiers_and_do_not_exempt_tags() {
+    let f = Fixture::new();
+    for repo in [&f.a, &f.b] {
+        git(repo, &["commit", "--allow-empty", "-m", "second"]);
+        git(repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    }
+    git(&f.a, &["tag", "main"]);
+    git(&f.b, &["tag", "tob/main"]);
+    ok(
+        &f.a,
+        &["diff", "refs/heads/main~1..refs/remotes/origin/main", "--"],
+    );
+    ok(&f.a, &["diff", "origin/main", "refs/tags/main", "--"]);
+    let out = fail(&f.a, &["diff", "main", "--"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("both a branch and a tag"));
+
+    // A branch found only via a remote-tracking ref should still use Git's
+    // normal branch inference for the unprefixed name.
+    for repo in [&f.a, &f.b] {
+        git(repo, &["remote", "add", "origin", "."]);
+        git(repo, &["update-ref", "refs/remotes/origin/master", "HEAD"]);
+    }
+    ok(&f.a, &["switch", "master"]);
+    assert_eq!(git(&f.b, &["branch", "--show-current"]), "master");
+}
+
 #[test]
 fn rename_and_force_create_keep_branch_prefixes() {
     let f = Fixture::new();
@@ -649,7 +718,7 @@ fn empty_path_separator_does_not_bypass_switch_protection() {
     fs::write(f.b.join("file.txt"), "precious changes").unwrap();
     fail(&f.a, &["checkout", "-f", "feature", "--"]);
     assert_eq!(git(&f.a, &["branch", "--show-current"]), "main");
-    assert_eq!(git(&f.b, &["branch", "--show-current"]), "tob/main");
+    assert_eq!(git(&f.b, &["branch", "--show-current"]), "main");
     assert_eq!(
         fs::read_to_string(f.b.join("file.txt")).unwrap(),
         "precious changes"
