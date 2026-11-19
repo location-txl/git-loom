@@ -94,7 +94,7 @@ enum WorktreeCommand {
 enum CompletionCommand {
     /// Generate Zsh completions with dynamic repository and reference candidates
     Zsh {
-        /// Install the completion file rather than printing it
+        /// Install completions and configure new interactive Zsh sessions
         #[arg(long)]
         install: bool,
         /// Override the completion directory

@@ -333,6 +333,17 @@ fn glob_copies_nested_hidden_files_and_skips_symlinks() {
     );
     assert!(!target.join(".env.link").exists());
 }
+fn install_completion(home: &Path, zdotdir: Option<&Path>, extra_args: &[&str]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_git-loom"));
+    cmd.current_dir(home)
+        .env("HOME", home)
+        .env_remove("ZDOTDIR");
+    if let Some(dir) = zdotdir {
+        cmd.env("ZDOTDIR", dir);
+    }
+    cmd.args(extra_args).output().unwrap()
+}
+
 #[test]
 fn completion_install_and_dynamic_candidates() {
     let f = Fixture::new();
@@ -344,10 +355,14 @@ fn completion_install_and_dynamic_candidates() {
         "--dir",
         directory.to_str().unwrap(),
     ];
-    ok(&f.root, &args);
-    ok(&f.root, &args);
+    assert!(install_completion(&f.root, None, &args).status.success());
+    let rc = f.root.join(".zshrc");
+    let first = fs::read_to_string(&rc).unwrap();
+    assert!(install_completion(&f.root, None, &args).status.success());
+    assert_eq!(fs::read_to_string(&rc).unwrap(), first);
     fs::write(directory.join("_git-loom"), "external").unwrap();
-    fail(&f.root, &args);
+    assert!(!install_completion(&f.root, None, &args).status.success());
+    assert_eq!(fs::read_to_string(rc).unwrap(), first);
     assert_eq!(
         fs::read_to_string(directory.join("_git-loom")).unwrap(),
         "external"
@@ -503,8 +518,9 @@ fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
     assert!(output.lines().any(|l| l == "tob/topic"), "{output}");
     assert!(output.contains("--json"), "{output}");
     let directory = f.root.join("zsh");
-    ok(
-        &f.a,
+    let out = install_completion(
+        &f.root,
+        None,
         &[
             "completions",
             "zsh",
@@ -512,6 +528,11 @@ fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
             "--dir",
             directory.to_str().unwrap(),
         ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
     );
     let out = Command::new("zsh").args(["-f", "-c", "fpath=($1 $fpath); autoload -Uz _git-loom; _describe() { return 0; }; _files() { return 0; }; compadd() { print -l -- $@; }; words=(loom doctor ''); CURRENT=3; _git-loom", "zsh", directory.to_str().unwrap()]).output().unwrap();
     assert!(
@@ -523,51 +544,57 @@ fn zsh_eval_and_autoload_dispatch_dynamic_completions() {
 }
 
 #[test]
-fn zsh_install_registration_works_with_a_stale_compinit_dump() {
-    let f = Fixture::new();
-    let directory = f.root.join("completion dir");
-    let install = ok(
-        &f.a,
-        &[
-            "completions",
-            "zsh",
-            "--install",
-            "--dir",
-            directory.to_str().unwrap(),
-        ],
+fn zsh_installer_registers_after_a_stale_compinit_dump() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().canonicalize().unwrap();
+    let zdotdir = home.join("dot files");
+    let directory = "completion dir's";
+    fs::create_dir(&zdotdir).unwrap();
+    let rc = zdotdir.join(".zshrc");
+    let original = r#"
+autoload -Uz compinit
+compinit -i -d "$ZDOTDIR/stale"
+compinit -C -d "$ZDOTDIR/stale"
+print -r -- "${_comps[git-loom]:-missing}"
+"#;
+    fs::write(&rc, original).unwrap();
+    fs::set_permissions(&rc, fs::Permissions::from_mode(0o640)).unwrap();
+    let args = ["completions", "zsh", "--install", "--dir", directory];
+    let install = install_completion(&home, Some(&zdotdir), &args);
+    assert!(
+        install.status.success(),
+        "{}",
+        String::from_utf8_lossy(&install.stderr)
     );
-    let instructions = String::from_utf8(install.stdout).unwrap();
-    let setup = instructions
-        .lines()
-        .find(|line| line.starts_with("fpath=("))
-        .unwrap();
-    let register = instructions
-        .lines()
-        .skip_while(|line| !line.starts_with("autoload "))
-        .take(2)
-        .collect::<Vec<_>>()
-        .join("\n");
+    assert!(!home.join(".zshrc").exists());
+    assert!(home.join(directory).join("_git-loom").is_file());
+    let configured = fs::read_to_string(&rc).unwrap();
+    assert!(configured.starts_with(original));
+    assert_eq!(
+        fs::metadata(&rc).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert!(
+        install_completion(&home, Some(&zdotdir), &args)
+            .status
+            .success()
+    );
+    assert_eq!(fs::read_to_string(&rc).unwrap(), configured);
+
     let script = r#"
-      autoload -Uz compinit
-      compinit -i -d "$1"
-      print -r -- "${_comps[git-loom]:-missing}" > "$2"
-      eval "$3"
-      compinit -C -d "$1"
-      print -r -- "${_comps[git-loom]:-missing}" >> "$2"
-      eval "$4"
-      print -r -- "${_comps[git-loom]:-missing}"
-      words=(git-loom doctor '')
-      CURRENT=3
-      compadd() { print -l -- "$@"; }
-      "${_comps[git-loom]}"
-    "#;
-    let before = f.root.join("before");
+print -r -- "${_comps[git-loom]:-missing}"
+words=(git-loom doctor '')
+CURRENT=3
+compadd() { print -l -- "$@"; }
+"${_comps[git-loom]}"
+"#;
     let out = Command::new("zsh")
-        .args(["-f", "-c", script, "zsh"])
-        .arg(f.root.join(".zcompdump"))
-        .arg(&before)
-        .arg(setup)
-        .arg(register)
+        .args(["-ic", script])
+        .current_dir(&zdotdir)
+        .env("HOME", &home)
+        .env("ZDOTDIR", &zdotdir)
         .output()
         .unwrap();
     assert!(
@@ -575,10 +602,60 @@ fn zsh_install_registration_works_with_a_stale_compinit_dump() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(fs::read_to_string(before).unwrap(), "missing\nmissing\n");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout.lines().next(), Some("_git-loom"), "{stdout}");
+    assert!(stdout.starts_with("missing\n_git-loom\n"), "{stdout}");
     assert!(stdout.contains("--json"), "{stdout}");
+}
+
+#[test]
+fn zsh_installer_supports_a_fresh_home_and_refuses_unmanaged_startup_targets() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let rc = home.join(".zshrc");
+    let target = home.join(".zsh/completions/_git-loom");
+    let actual = home.join("dotfile");
+    let args = ["completions", "zsh", "--install"];
+    fs::write(&actual, "# user configuration").unwrap();
+    symlink(&actual, &rc).unwrap();
+    assert!(!install_completion(home, None, &args).status.success());
+    assert!(fs::symlink_metadata(&rc).unwrap().is_symlink());
+    assert_eq!(fs::read_to_string(&actual).unwrap(), "# user configuration");
+    assert!(!target.exists());
+    fs::remove_file(&rc).unwrap();
+    fs::write(&rc, "# >>> git-loom zsh completions >>>\n").unwrap();
+    assert!(!install_completion(home, None, &args).status.success());
+    assert!(!target.exists());
+    fs::remove_file(&rc).unwrap();
+    assert!(
+        install_completion(
+            home,
+            None,
+            &["--dry-run", "completions", "zsh", "--install"]
+        )
+        .status
+        .success()
+    );
+    assert!(!rc.exists() && !target.exists());
+    let out = install_completion(home, None, &args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = Command::new("zsh")
+        .args(["-ic", "print -r -- ${_comps[git-loom]:-missing}"])
+        .env("HOME", home)
+        .env_remove("ZDOTDIR")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "_git-loom");
 }
 
 #[test]

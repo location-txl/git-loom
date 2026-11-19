@@ -166,24 +166,9 @@ eval "$(git loom completions zsh)"
 git loom completions zsh --install --dir ~/.zsh/completions
 ```
 
-默认安装到 `~/.zsh/completions/_git-loom`，只更新带 Loom 标记的文件，拒绝覆盖其他同名文件或符号链接。不修改 `.zshrc`，不清理补全缓存。
+运行一次 `git loom completions zsh --install`，然后打开新终端即可，不需要手动编辑 `.zshrc` 或清理缓存。普通的 Git Loom 二进制安装不会修改 Zsh 配置。
 
-在 `compinit` 或 Oh My Zsh 初始化之前加入补全目录（自定义安装目录用同一个路径）：
-
-```zsh
-fpath=(~/.zsh/completions $fpath)
-```
-
-在最后一次 `compinit` 或加载 Oh My Zsh 和插件之后，显式注册补全：
-
-```zsh
-autoload -Uz _git-loom
-compdef _git-loom git-loom
-```
-
-这样即使 Zsh 复用了安装补全前的缓存，`git-loom` 也能加载已安装的脚本。不需要为了加载 Loom 再执行一次 `compinit`；如果配置里已经有多次初始化，把注册放到最后一次之后。
-
-打开新终端，输入 `git-loom doc` 再按 Tab，应该补成 `doctor`。如果无效，可运行 `print -r -- ${_comps[git-loom]:-未注册}` 检查当前终端是否已注册（应显示 `_git-loom`）。升级二进制后，如使用文件安装方式，重新运行 `git loom completions zsh --install` 刷新脚本。
+此子命令默认写入 `~/.zsh/completions/_git-loom`，并在 `$ZDOTDIR/.zshrc`（`ZDOTDIR` 须已导出，否则使用 `~/.zshrc`）末尾添加或更新 Git Loom 管理的配置块。它保留其他配置；不覆盖非 Loom 管理的补全文件或符号链接。重复安装不会添加第二个配置块。用 `git loom --dry-run completions zsh --install` 可查看将涉及的两个路径而不写文件。以后更新二进制时，重新运行补全安装子命令即可刷新脚本。
 
 支持 `git loom` 和 `git-loom`，补全子命令、选项、仓库、分支/tag、worktree 与路径；原生 Git 选项复用系统 Git 补全。内部 `__complete` 只读查询，配置错误时静默返回，保留静态与路径补全。
 
