@@ -570,6 +570,19 @@ print -r -- "${_comps[git-loom]:-missing}"
     );
     assert!(!home.join(".zshrc").exists());
     assert!(home.join(directory).join("_git-loom").is_file());
+    let status_args = ["completions", "zsh", "--status"];
+    let status = install_completion(&home, Some(&zdotdir), &status_args);
+    assert_eq!(status.stdout, b"configured\n");
+    let report = install_completion(&home, Some(&zdotdir), &["doctor", "--json"]);
+    let report: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    let check = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "zsh-completions")
+        .unwrap();
+    assert_eq!(check["level"], "OK");
+    assert_eq!(check["suggestion"], "");
     let configured = fs::read_to_string(&rc).unwrap();
     assert!(configured.starts_with(original));
     assert_eq!(
@@ -605,6 +618,9 @@ compadd() { print -l -- "$@"; }
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.starts_with("missing\n_git-loom\n"), "{stdout}");
     assert!(stdout.contains("--json"), "{stdout}");
+    fs::remove_file(home.join(directory).join("_git-loom")).unwrap();
+    let status = install_completion(&home, Some(&zdotdir), &status_args);
+    assert_eq!(status.stdout, b"missing\n");
 }
 
 #[test]
@@ -638,6 +654,17 @@ fn zsh_installer_supports_a_fresh_home_and_refuses_unmanaged_startup_targets() {
         .success()
     );
     assert!(!rc.exists() && !target.exists());
+    let status_args = ["completions", "zsh", "--status"];
+    assert_eq!(
+        install_completion(home, None, &status_args).stdout,
+        b"missing\n"
+    );
+    fs::write(&rc, r#"eval "$(git loom completions zsh)""#).unwrap();
+    assert_eq!(
+        install_completion(home, None, &status_args).stdout,
+        b"unverified\n"
+    );
+    fs::remove_file(&rc).unwrap();
     let out = install_completion(home, None, &args);
     assert!(
         out.status.success(),

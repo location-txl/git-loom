@@ -6,7 +6,7 @@ use std::{
 };
 const SCRIPT: &str = include_str!("../completions/_git-loom");
 const MARKER: &str = "# git-loom managed completion v1";
-pub(crate) const START: &str = "# >>> git-loom zsh completions >>>";
+const START: &str = "# >>> git-loom zsh completions >>>";
 const END: &str = "# <<< git-loom zsh completions <<<";
 // Keep static completion vocabulary in sync with clap's actual command tree.
 fn script() -> String {
@@ -68,28 +68,106 @@ fn script() -> String {
         )
 }
 
-pub fn run(install: bool, directory: Option<PathBuf>, dry: bool) -> Result<i32> {
+#[derive(Clone, Copy)]
+pub(crate) enum Status {
+    Configured,
+    Missing,
+    Unverified,
+}
+
+impl Status {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Missing => "missing",
+            Self::Unverified => "unverified",
+        }
+    }
+}
+
+fn home() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+fn rc_path() -> Result<PathBuf> {
+    let directory = env::var_os("ZDOTDIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(home)
+        .ok_or("Neither ZDOTDIR nor HOME is set; cannot locate .zshrc")?;
+    Ok(std::path::absolute(directory.join(".zshrc"))?)
+}
+
+pub(crate) fn status() -> Result<Status> {
+    let rc = rc_path()?;
+    if fs::symlink_metadata(&rc).is_ok_and(|m| !m.is_file()) {
+        return Ok(Status::Unverified);
+    }
+    let config = read_regular(&rc)?.map(|(text, _)| text).unwrap_or_default();
+    if let Some((_, block)) = config.split_once(&format!("{START}\n")) {
+        let Some((block, _)) = block.split_once(&format!("{END}\n")) else {
+            return Ok(Status::Unverified);
+        };
+        if let Some(quoted) = block
+            .lines()
+            .find_map(|l| l.strip_prefix("    autoload -Uz -- "))
+        {
+            // Decode only the installer’s exact quoting, never evaluate startup scripts.
+            if let Some(inner) = quoted.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+                let path = inner.replace("'\\''", "'");
+                let path_obj = Path::new(&path);
+                if path_obj.is_absolute() && shell_quote(&path) == quoted {
+                    return match read_regular(path_obj)? {
+                        Some((text, _)) if text.lines().any(|l| l == MARKER) => {
+                            Ok(Status::Configured)
+                        }
+                        Some(_) => Ok(Status::Unverified),
+                        None => Ok(Status::Missing),
+                    };
+                }
+            }
+        }
+        return Ok(Status::Unverified);
+    }
+    let known_manual_setup = config.lines().map(str::trim_start).any(|l| {
+        !l.starts_with('#')
+            && (l.contains("git loom completions zsh")
+                || l.contains("git-loom completions zsh")
+                || l.contains("compdef _git-loom git-loom"))
+    });
+    let legacy_file = home().is_some_and(|h| h.join(".zsh/completions/_git-loom").exists());
+    Ok(if known_manual_setup || legacy_file {
+        Status::Unverified
+    } else {
+        Status::Missing
+    })
+}
+
+pub fn run(
+    install: bool,
+    directory: Option<PathBuf>,
+    check_status: bool,
+    dry: bool,
+) -> Result<i32> {
+    if check_status {
+        println!("{}", status()?.label());
+        return Ok(0);
+    }
     let script = script();
     if !install {
         print!("{script}\n_git_loom_register\n");
         return Ok(0);
     }
-    let home = env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let rc_dir = env::var_os("ZDOTDIR")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home.clone())
-        .ok_or("Neither ZDOTDIR nor HOME is set; cannot locate .zshrc")?;
     let directory = match directory {
         Some(path) => path,
-        None => home
+        None => home()
             .ok_or("HOME is not set; use --dir")?
             .join(".zsh/completions"),
     };
     let target = std::path::absolute(directory.join("_git-loom"))?;
-    let rc = std::path::absolute(rc_dir.join(".zshrc"))?;
+    let rc = rc_path()?;
     let target_spec = target
         .to_str()
         .filter(|s| !s.contains(['\n', '\r']))

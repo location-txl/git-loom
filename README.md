@@ -10,7 +10,7 @@
 curl -fsSL https://raw.githubusercontent.com/location-txl/git-loom/main/install.sh | sh
 ```
 
-默认安装到 `~/.local/bin/git-loom`，重复运行即可升级。
+默认安装到 `~/.local/bin/git-loom`，重复运行即可升级。交互终端中的 Zsh 用户若尚未配置补全，安装完成后会收到一次询问，默认不安装。已配置、状态无法确认或非交互运行时不会询问。
 
 卸载：
 
@@ -166,7 +166,7 @@ eval "$(git loom completions zsh)"
 git loom completions zsh --install --dir ~/.zsh/completions
 ```
 
-运行一次 `git loom completions zsh --install`，然后打开新终端即可，不需要手动编辑 `.zshrc` 或清理缓存。普通的 Git Loom 二进制安装不会修改 Zsh 配置。
+运行一次 `git loom completions zsh --install`，然后打开新终端即可，不需要手动编辑 `.zshrc` 或清理缓存。安装脚本只在你确认后调用这个子命令；否则不会修改 Zsh 配置。可用 `git loom completions zsh --status` 只读检查持久配置（不代表当前终端已加载）。
 
 此子命令默认写入 `~/.zsh/completions/_git-loom`，并在 `$ZDOTDIR/.zshrc`（`ZDOTDIR` 须已导出，否则使用 `~/.zshrc`）末尾添加或更新 Git Loom 管理的配置块。它保留其他配置；不覆盖非 Loom 管理的补全文件或符号链接。重复安装不会添加第二个配置块。用 `git loom --dry-run completions zsh --install` 可查看将涉及的两个路径而不写文件。以后更新二进制时，重新运行补全安装子命令即可刷新脚本。
 

@@ -1,6 +1,23 @@
 #!/bin/sh
 set -eu
 
+offer_zsh_completion() {
+    login_shell=${SHELL:-}
+    [ "${login_shell##*/}" = zsh ] && [ -z "${CI:-}" ] && [ -t 1 ] || return 0
+    # stdin may carry the installer itself (curl | sh); read from the real terminal.
+    ( : </dev/tty ) 2>/dev/null || return 0
+    [ "$("$1" completions zsh --status 2>/dev/null)" = missing ] || return 0
+    printf '要安装 Zsh 补全吗？[y/N] ' >&2
+    IFS= read -r answer </dev/tty || return 0
+    case "$answer" in
+        [yY]|[yY][eE][sS])
+            if ! "$1" completions zsh --install; then
+                echo 'Zsh 补全安装失败；git-loom 本体已安装。' >&2
+            fi
+            ;;
+    esac
+}
+
 # 函数完整下载后才开始安装，避免管道下载中断时执行不完整脚本。
 main() {
     if [ "$(uname -s)" != Darwin ]; then
@@ -56,6 +73,7 @@ main() {
             printf '  export PATH="%s:$PATH"\n' "$install_dir"
             ;;
     esac
+    offer_zsh_completion "$install_dir/git-loom"
 }
 
 main "$@"

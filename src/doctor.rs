@@ -173,23 +173,23 @@ pub fn run(path: Option<&Path>, json: bool) -> Result<i32> {
             }
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = std::path::PathBuf::from(home);
-        let installed = home.join(".zsh/completions/_git-loom").is_file();
-        let rc = std::env::var_os("ZDOTDIR")
-            .filter(|value| !value.is_empty())
-            .map(std::path::PathBuf::from)
-            .unwrap_or(home.clone())
-            .join(".zshrc");
-        let content = std::fs::read_to_string(rc).unwrap_or_default();
-        let configured = content.lines().any(|l| {
-            l == crate::completions::START
-                || (!l.trim_start().starts_with('#')
-                    && l.contains("fpath")
-                    && l.contains(".zsh/completions"))
-        });
-        checks.push(check("zsh-completions", if installed && configured { "OK" } else { "WARN" }, None, format!("completion file in default directory={installed}; known .zshrc completion configuration={configured} (static check; does not confirm the current shell has loaded it)"), "Run git loom completions zsh --install; in the current shell, run eval \"$(git loom completions zsh)\""));
-    }
+    let completion_status =
+        crate::completions::status().unwrap_or(crate::completions::Status::Unverified);
+    let (level, suggestion) = match completion_status {
+        crate::completions::Status::Configured => ("OK", ""),
+        crate::completions::Status::Missing => ("WARN", "Run git loom completions zsh --install"),
+        crate::completions::Status::Unverified => ("WARN", ""),
+    };
+    checks.push(check(
+        "zsh-completions",
+        level,
+        None,
+        format!(
+            "{} (static check; does not confirm the current shell has loaded it)",
+            completion_status.label()
+        ),
+        suggestion,
+    ));
     let code = i32::from(checks.iter().any(|c| c.level == "ERROR"));
     if json {
         println!(
