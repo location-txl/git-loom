@@ -625,7 +625,7 @@ compadd() { print -l -- "$@"; }
 
 #[test]
 fn zsh_installer_supports_a_fresh_home_and_refuses_unmanaged_startup_targets() {
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
@@ -671,8 +671,23 @@ fn zsh_installer_supports_a_fresh_home_and_refuses_unmanaged_startup_targets() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // A fresh Zsh without a TTY must skip insecure completion directories,
+    // not block on compinit's audit prompt and not load them.
+    let insecure = home.join("insecure");
+    fs::create_dir(&insecure).unwrap();
+    fs::set_permissions(&insecure, fs::Permissions::from_mode(0o777)).unwrap();
+    fs::write(
+        insecure.join("_loom_insecure_fixture"),
+        "#compdef loom-insecure-fixture\n",
+    )
+    .unwrap();
+    let block = fs::read_to_string(&rc).unwrap();
+    fs::write(&rc, format!("fpath=(\"$HOME/insecure\" $fpath)\n{block}")).unwrap();
     let out = Command::new("zsh")
-        .args(["-ic", "print -r -- ${_comps[git-loom]:-missing}"])
+        .args([
+            "-ic",
+            "print -r -- ${_comps[git-loom]:-missing} ${_comps[loom-insecure-fixture]:-skipped}",
+        ])
         .env("HOME", home)
         .env_remove("ZDOTDIR")
         .output()
@@ -682,7 +697,10 @@ fn zsh_installer_supports_a_fresh_home_and_refuses_unmanaged_startup_targets() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "_git-loom");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "_git-loom skipped"
+    );
 }
 
 #[test]

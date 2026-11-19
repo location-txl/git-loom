@@ -238,7 +238,7 @@ fn configure_rc(old: &str, target: &str) -> Result<String> {
     }
     let target = shell_quote(target);
     result.push_str(&format!(
-        "{START}\nif [[ -r {target} ]]; then\n  if (( ! $+functions[compdef] )); then\n    autoload -Uz compinit && compinit\n  fi\n  if (( $+functions[compdef] )); then\n    autoload -Uz -- {target}\n    compdef _git-loom git-loom\n  fi\nfi\n{END}\n"
+        "{START}\nif [[ -r {target} ]]; then\n  if (( ! $+functions[compdef] )); then\n    autoload -Uz compinit && compinit -i\n  fi\n  if (( $+functions[compdef] )); then\n    autoload -Uz -- {target}\n    compdef _git-loom git-loom\n  fi\nfi\n{END}\n"
     ));
     Ok(result)
 }
